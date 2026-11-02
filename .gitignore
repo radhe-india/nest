@@ -1,0 +1,4 @@
+seed.sql
+*.private.sql
+.DS_Store
+node_modules/
