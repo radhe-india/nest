@@ -1,6 +1,6 @@
 import { icon, ICON_CHOICES } from './icons.js';
 import { supabaseDB, memoryDB } from './db.js';
-import { demoSeed } from './demo.js';
+import { demoSeed, DEFAULT_CATEGORIES } from './demo.js';
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -60,6 +60,7 @@ async function boot() {
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   const params = new URLSearchParams(location.search);
   const h = location.hash.slice(1); if (TABS.includes(h)) S.tab = h;
+  if (window.NEST_PREVIEW) { const seed = { categories: DEFAULT_CATEGORIES, members: [], ...window.NEST_PREVIEW }; S.db = memoryDB(seed); S.mode = 'demo'; S.demoNote = 'Preview with your real entries from Aug–Nov. Try anything: changes here are not saved.'; S.email = 'preview'; await loadAll(); return; }
   if (params.has('demo')) { S.db = memoryDB(demoSeed()); S.mode = 'demo'; S.email = 'demo'; await loadAll(); return; }
   const cfg = window.NEST_CONFIG || {};
   const url = cfg.supabaseUrl || ls.get('sbUrl', ''), key = cfg.supabaseKey || ls.get('sbKey', '');
@@ -138,7 +139,7 @@ function topBar() {
   const sub = { home: 'Overview', entries: 'All entries', import: 'Import statements', more: 'Settings' }[S.tab];
   let h = `<header class="top"><div class="brand"><div class="mark">${icon('leaf', 'sm')}</div><div><b>Nest</b><small>${sub}</small></div></div>
     <button class="iconbtn" data-act="add" aria-label="Add an entry">${icon('plus')}</button></header>`;
-  if (S.mode === 'demo') h += `<div class="statusbar warn">Example data. Nothing here is real and nothing you change is saved.</div>`;
+  if (S.mode === 'demo') h += `<div class="statusbar warn">${esc(S.demoNote || 'Example data. Nothing here is real and nothing you change is saved.')}</div>`;
   if (S.tab === 'home' || S.tab === 'entries') {
     h += `<div class="seg" role="group" aria-label="Whose money">${VIEWS().map(([k, l]) => `<button data-act="view" data-v="${k}" aria-pressed="${S.view === k}">${esc(l)}</button>`).join('')}</div>`;
     h += `<div class="monthbar"><h1>${mLabel(S.month)}</h1><div class="monthnav">
@@ -158,8 +159,8 @@ function viewHome() {
   const left = biz ? t.in - t.spent : t.in - t.spent - t.saved;
   const base = Math.max(t.in, t.spent + t.saved, 1);
   let h = `<section class="hero">
-    <div class="lbl">${biz ? (left >= 0 ? 'Business profit' : 'Business loss') : left >= 0 ? 'Left after spending and saving' : 'Spent and saved more than came in'}</div>
-    <div class="big num">${fmt(Math.abs(left))}</div>
+    <div class="lbl">${!t.in ? (biz ? 'Business spending' : 'Spent this month') : biz ? (left >= 0 ? 'Business profit' : 'Business loss') : left >= 0 ? 'Left after spending and saving' : 'Spent and saved more than came in'}</div>
+    <div class="big num">${fmt(!t.in ? t.spent : Math.abs(left))}</div>
     <div class="trio">
       <div><span>${icon('in', 'sm')} Came in</span><b class="num">${fmtK(t.in)}</b></div>
       <div><span>${icon('out', 'sm')} Spent</span><b class="num">${fmtK(t.spent)}</b></div>
@@ -256,7 +257,7 @@ function viewMore() {
     <section class="card"><div class="card-h"><h2>Data</h2></div><div class="list">
       ${li('export', 'download', 'Export to CSV', 'All entries, for Excel or Google Sheets')}
       ${li('install', 'phone', 'Put Nest on your home screen', 'Install it like an app')}
-      ${S.mode === 'live' ? li('signout', 'logout', 'Sign out', esc(S.email)) : li('leavedemo', 'logout', 'Leave the example', 'Go to sign in')}
+      ${S.mode === 'live' ? li('signout', 'logout', 'Sign out', esc(S.email)) : window.NEST_PREVIEW ? '' : li('leavedemo', 'logout', 'Leave the example', 'Go to sign in')}
     </div></section>`;
 }
 
