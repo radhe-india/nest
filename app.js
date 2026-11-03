@@ -57,7 +57,7 @@ async function boot() {
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   const params = new URLSearchParams(location.search);
   const h = location.hash.slice(1); if (TABS.includes(h)) S.tab = h;
-  if (window.NEST_PREVIEW) { const seed = { categories: DEFAULT_CATEGORIES, members: [], ...window.NEST_PREVIEW }; S.db = memoryDB(seed); S.mode = 'demo'; S.demoNote = 'Preview with your real entries from Aug–Nov. Try anything: changes here are not saved.'; S.email = 'preview'; await loadAll(); return; }
+  if (window.NEST_PREVIEW) { const seed = { categories: DEFAULT_CATEGORIES, members: [], ...window.NEST_PREVIEW }; S.db = memoryDB(seed); S.mode = 'demo'; S.email = 'preview'; await loadAll(); return; }
   if (params.has('demo')) { S.db = memoryDB(demoSeed()); S.mode = 'demo'; S.email = 'demo'; await loadAll(); return; }
   const cfg = window.NEST_CONFIG || {};
   const url = cfg.supabaseUrl || ls.get('sbUrl', ''), key = cfg.supabaseKey || ls.get('sbKey', '');
@@ -151,39 +151,37 @@ function gateView() {
   return `<div class="login">${brand}<h1>Something went wrong</h1><p>${esc(S.error || '')}</p><button class="btn primary block" onclick="location.reload()">Try again</button></div>`;
 }
 function topBar() {
-  const sub = { home: greeting(), entries: 'Every rupee, in order', insights: 'How the month is going', import: 'Import statements', more: 'Settings' }[S.tab];
-  let h = `<header class="top"><div class="brand"><div class="mark">${icon('leaf', 'sm')}</div><div><b>Nest</b><small>${esc(sub)}</small></div></div>
-    <button class="iconbtn" data-act="tab" data-tab="import" aria-label="Import a statement or screenshot">${icon('upload')}</button></header>`;
-  if (S.mode === 'demo') h += `<div class="statusbar warn">${esc(S.demoNote || 'Example data. Nothing here is real and nothing you change is saved.')}</div>`;
+  const sub = { home: '', entries: 'Every rupee, in order', insights: 'How the month went', import: 'Import statements', more: 'Settings' }[S.tab];
+  let h = `<header class="top"><div class="brand"><h1 class="hand">Our Nest</h1>${sub ? `<small>${esc(sub)}</small>` : ''}</div>
+    <div class="topr"><span class="avs" aria-hidden="true">${avatar('me')}${avatar('trisha')}</span><button class="iconbtn" data-act="tab" data-tab="import" aria-label="Import a statement or screenshot">${icon('upload')}</button></div></header>`;
+  if (S.mode === 'demo' && !window.NEST_PREVIEW) h += `<div class="statusbar warn">Example data. Nothing here is real and nothing you change is saved.</div>`;
   if (S.tab === 'home' || S.tab === 'entries' || S.tab === 'insights') {
     h += `<div class="seg viewseg" role="group" aria-label="Household or business">${VIEWS().map(([k, l]) => `<button data-act="view" data-v="${k}" aria-pressed="${S.view === k}">${icon(k === 'home' ? 'home' : 'lotus', 'sm')} ${esc(l)}</button>`).join('')}</div>`;
-    h += `<div class="monthbar"><h1>${mLabel(S.month)}</h1><div class="monthnav">
-      <button data-act="month" data-d="-1" aria-label="Previous month">${icon('chevl', 'sm')}</button>
-      <button data-act="month" data-d="1" aria-label="Next month" ${S.month >= thisMonth() ? 'disabled' : ''}>${icon('chevr', 'sm')}</button></div></div>`;
+    h += `<div class="monthbar"><button data-act="month" data-d="-1" aria-label="Previous month">${icon('chevl', 'sm')}</button><h2 class="hand">${mLabel(S.month)}</h2>
+      <button data-act="month" data-d="1" aria-label="Next month" ${S.month >= thisMonth() ? 'disabled' : ''}>${icon('chevr', 'sm')}</button></div>`;
   }
   return h;
 }
-function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
 function tabBar() {
   const t = (k, ic, l) => `<button class="tab" data-act="tab" data-tab="${k}" ${S.tab === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l}</span></button>`;
   return t('home', 'home', 'Home') + t('entries', 'list', 'Entries') + `<button class="fab" data-act="add" aria-label="Add an entry">${icon('plus')}</button>` + t('insights', 'chart', 'Insights') + t('more', 'gear', 'More');
 }
+/* pastel of a category colour, for light and dark paper */
+function mix(hex, to, k) { const h = (hex || '#8A90AD').replace('#', ''); const c = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)), t = [0, 2, 4].map(i => parseInt(to.slice(i + 1, i + 3), 16)); return '#' + c.map((v, i) => Math.round(v + (t[i] - v) * k).toString(16).padStart(2, '0')).join(''); }
+const tints = c => `--c:${c};--t:${mix(c, '#FFFFFF', 0.66)};--td:${mix(c, '#232838', 0.55)}`;
+const under = (cls = '') => `<svg class="und ${cls}" viewBox="0 0 150 12" preserveAspectRatio="none" aria-hidden="true"><path d="M3 8 C30 3 60 10 90 6 S135 4 147 7"/></svg>`;
 
 /* ----- illustrations ----- */
 let artId = 0;
 function houseArt(pct, over) {
-  const id = 'h' + (++artId), p = Math.max(0, Math.min(1, pct || 0));
-  const top = 104 - p * 54;
-  return `<svg class="house" viewBox="0 0 120 112" aria-hidden="true">
-    <defs><clipPath id="${id}"><rect x="25" y="50" width="70" height="54" rx="5"/></clipPath></defs>
-    <rect x="80" y="20" width="10" height="20" rx="2" class="h-line" fill="none"/>
-    <g clip-path="url(#${id})"><g class="h-fill ${over ? 'over' : ''}" style="transform:translateY(${top}px)">
-      <path class="h-wave" d="M-120 4 Q-105 -4 -90 4 T-60 4 T-30 4 T0 4 T30 4 T60 4 T90 4 T120 4 T150 4 T180 4 T210 4 T240 4 V80 H-120 Z"/></g></g>
-    <rect x="23" y="48" width="74" height="58" rx="7" class="h-line" fill="none"/>
-    <path d="M12 54 L60 14 L108 54" class="h-line roof" fill="none"/>
-    <rect x="52" y="80" width="16" height="26" rx="3" class="h-line thin" fill="none"/>
-    <circle cx="40" cy="66" r="5" class="h-line thin" fill="none"/>
-    <path class="h-bird" d="M88 16 q5 -6 10 0 q-5 -2 -10 0 z M93 13 l3 -3"/>
+  const id = 'h' + (++artId), p = Math.max(0, Math.min(1, pct || 0)), top = 96 - p * 52;
+  return `<svg class="house" viewBox="0 0 110 100" aria-hidden="true">
+    <defs><clipPath id="${id}"><path d="M24 44 L24 96 L86 96 L86 44 L55 18 Z"/></clipPath></defs>
+    <g clip-path="url(#${id})"><rect class="h-fill ${over ? 'over' : ''}" x="0" y="${top}" width="110" height="100"/></g>
+    <path class="h-line" d="M12 50 L55 12 L98 50 M24 42 V96 H86 V42 M48 96 V72 H62 V96 M70 26 V12 H79 V34"/>
+    <path class="h-line thin" d="M31 58 h12 v11 h-12z M37 58 v11 M31 63.5 h12"/>
+    <path class="h-ground" d="M2 97 C30 92 70 101 108 95"/>
+    <path class="h-bird" d="M88 6 q4 -5 8 0 q4 -5 8 0"/>
   </svg>`;
 }
 function nestArt(small) {
@@ -208,68 +206,75 @@ const avatar = w => `<span class="ava ava-${w}">${w === 'joint' ? icon('users', 
 /* ----- home ----- */
 function budgetTotal(scope = scopeOfView()) { return activeCats('spent', scope).reduce((s, c) => s + (+c.budget || 0), 0); }
 function viewHome() {
-  const list = monthEntries(), t = totals(list), biz = S.view === 'business', m = S.month, isCur = m === thisMonth();
+  const list = monthEntries(), t = totals(list), biz = S.view === 'business', m = S.month, isCur = m === thisMonth(), mon = MONTHS[+m.slice(5) - 1];
   const B = budgetTotal(), left = biz ? t.in - t.spent : t.in - t.spent - t.saved;
   const fillPct = B ? t.spent / B : t.in ? (t.spent + t.saved) / t.in : 0;
-  const fillLbl = B ? `${Math.round(t.spent / B * 100)}% of budget` : t.in ? `${Math.round((t.spent + t.saved) / t.in * 100)}% of income used` : '';
-  const headline = !t.in ? { l: biz ? 'Business spending' : 'Spent from the nest', v: t.spent } : biz ? { l: left >= 0 ? 'Business profit' : 'Business loss', v: Math.abs(left) } : left >= 0 ? { l: 'Still in the nest', v: left } : { l: 'Over what came in', v: -left };
-  let h = `<section class="hero"><div class="hero-top"><div style="min-width:0">
-      <div class="lbl">${esc(headline.l)} · ${MONTHS[+m.slice(5) - 1]}</div>
-      <div class="big num">${cnt(headline.v)}</div>
-      ${fillLbl ? `<span class="pill">${esc(fillLbl)}</span>` : `<span class="hint">Add what came in to see what's left</span>`}
-    </div>${houseArt(fillPct, fillPct > 1)}</div>
-    <div class="trio">
-      <div><span>${icon('in', 'sm')} Came in</span><b class="num">${cnt(t.in, 'k')}</b></div>
-      <div><span>${icon('out', 'sm')} Spent</span><b class="num">${cnt(t.spent, 'k')}</b></div>
-      ${biz ? `<div><span>${icon('chart', 'sm')} Margin</span><b class="num">${t.in ? cnt(Math.max(0, left / t.in * 100), 'pct') : '–'}</b></div>` : `<div><span>${icon('piggy', 'sm')} Saved</span><b class="num">${cnt(t.saved, 'k')}</b></div>`}
+  const fillLbl = B ? `${Math.round(t.spent / B * 100)}% of the budget used` : t.in ? `${Math.round((t.spent + t.saved) / t.in * 100)}% of what came in, used` : '';
+  const headline = !t.in ? { l: biz ? 'spent on the business' : 'spent so far', v: t.spent, bad: false } : biz ? { l: left >= 0 ? 'business profit' : 'business loss', v: Math.abs(left), bad: left < 0 } : left >= 0 ? { l: 'left in the nest', v: left, bad: false } : { l: 'over what came in', v: -left, bad: true };
+  const inPreset = S.presets.find(p => !p.auto && p.kind === 'in' && (p.scope || 'home') === scopeOfView());
+  const addIn = inPreset ? `data-act="preset" data-id="${inPreset.id}"` : `data-act="addin"`;
+  let h = `<section class="nbhero">${houseArt(fillPct, fillPct > 1)}
+    <div class="hand lbl">${esc(headline.l)}</div>
+    <div class="big num${headline.bad ? ' bad' : ''}">${cnt(headline.v)}</div>${under(headline.bad ? 'bad' : '')}
+    ${fillLbl ? `<div class="hand fill">${esc(fillLbl)}</div>` : ''}
+    <div class="ledger">
+      <div><span class="hand">came in</span><b class="num">${t.in ? cnt(t.in) : '—'}</b>${t.in ? '' : `<button class="hand pen" ${addIn}>← add ${biz ? 'income' : 'salary'}</button>`}</div>
+      ${t.in ? `<div><span class="hand">spent</span><b class="num">${cnt(t.spent)}</b></div>` : ''}
+      ${biz ? `<div><span class="hand">margin</span><b class="num">${t.in ? cnt(Math.max(0, left / t.in * 100), 'pct') : '—'}</b></div>` : `<div><span class="hand">saved</span><b class="num">${cnt(t.saved)}</b>${!t.saved && list.length ? `<span class="hand pen">← nothing yet!</span>` : ''}</div>`}
     </div></section>`;
-  // pace
-  if (isCur && t.spent) {
-    const d = new Date().getDate(), proj = t.spent / d * daysIn(m), perDay = t.spent / d;
-    const avgPrev = avgMonthlySpend(m);
-    const tone = B ? (proj > B * 1.05 ? 'bad' : proj > B * 0.9 ? 'warn' : 'good') : avgPrev ? (proj > avgPrev * 1.1 ? 'warn' : 'good') : 'info';
-    h += `<section class="card glance tone-${tone}"><div class="g-ic">${icon(tone === 'good' ? 'check' : tone === 'info' ? 'bulb' : 'alert')}</div><div>
-      <b>${fmt(perDay)} a day so far</b><p>At this pace the month ends near ${fmt(proj)}${B ? `, against a ${fmt(B)} budget` : avgPrev ? `; you usually spend ${fmt(avgPrev)}` : ''}.</p></div></section>`;
+  // the month on a sticky note
+  const top = Object.entries(t.byCat).sort((a, b) => b[1] - a[1])[0];
+  if (t.spent) {
+    let tone = 'y', txt;
+    if (isCur) {
+      const d = new Date().getDate(), proj = t.spent / d * daysIn(m), perDay = t.spent / d, avgPrev = avgMonthlySpend(m);
+      tone = B ? (proj > B * 1.05 ? 'p' : proj > B * 0.9 ? 'y' : 'g') : avgPrev ? (proj > avgPrev * 1.1 ? 'p' : 'g') : 'y';
+      txt = `${fmt(perDay)} a day so far. At this pace ${mon} ends near ${fmtK(proj)}${B ? `, against a ${fmtK(B)} budget` : avgPrev ? `; usually it's ${fmtK(avgPrev)}` : ''}.`;
+    } else {
+      txt = `${t.in ? `Spent ${Math.round(t.spent / t.in * 100)}% of what came in. ` : ''}${top ? `${catOf(top[0]).name} was the big one at ${fmtK(top[1])}.` : ''}`;
+      if (t.in && t.saved / t.in >= 0.2) { tone = 'g'; txt += ` Saved ${Math.round(t.saved / t.in * 100)}%, nicely done.`; }
+    }
+    h += `<section class="sticky s-${tone}"><i class="tape" aria-hidden="true"></i><p class="hand">${esc(txt)}</p></section>`;
   }
   // quick add
   const sc = scopeOfView();
   const ps = S.presets.filter(p => !p.auto && (p.scope || 'home') === sc);
-  h += `<section class="card"><div class="card-h"><h2>Quick add</h2><button class="link" data-act="presets">Edit</button></div>
-    ${ps.length ? `<div class="quick">${ps.map(p => { const c = catOf(p.category_id); return `<button class="qbtn" data-act="preset" data-id="${p.id}" style="--c:${c.color}"><span class="bub">${icon(c.icon, 'sm')}</span><span><b>${esc(p.label)}</b><small>${p.amount ? fmt(p.amount) : 'Tap to add'}</small></span></button>`; }).join('')}</div>`
-      : `<p class="small muted" style="margin:0">Make one-tap buttons for things you log often, like rent or groceries.</p>`}
+  h += `<section class="bare"><div class="card-h"><h2>Quick add</h2><button class="link" data-act="presets">edit</button></div>
+    ${ps.length ? `<div class="qchips">${ps.map(p => { const c = catOf(p.category_id); return `<button class="qbtn" data-act="preset" data-id="${p.id}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span>${esc(p.label)}</span>${p.amount ? `<small class="num">${fmtK(p.amount)}</small>` : ''}</button>`; }).join('')}</div>`
+      : `<p class="hand note-l">Make one-tap buttons for things you log often, like rent or groceries.</p>`}
   </section>`;
-  // coming up (autopays already placed in this month, still ahead)
-  if (isCur) {
-    const up = list.filter(e => e.source === 'auto' && e.date > today()).sort((a, b) => a.date.localeCompare(b.date));
-    if (up.length) h += `<section class="card upcoming"><div class="card-h"><h2>${icon("refund", "sm")} Coming up</h2><span class="small muted">${fmt(up.reduce((s, e) => s + +e.amount, 0))} this month</span></div>
-      <div class="upl">${up.slice(0, 6).map(e => { const c = catOf(e.category_id); return `<button class="up" data-act="edit" data-id="${e.id}" style="--c:${c.color}"><span class="up-d"><b>${+e.date.slice(8)}</b>${new Date(e.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' })}</span><span class="up-n">${esc(e.note || c.name)}</span><span class="num">${fmt(e.amount)}</span></button>`; }).join('')}</div></section>`;
-  }
   if (!list.length) {
-    h += `<div class="card"><div class="empty">${nestArt(true)}<b>The nest is quiet in ${MONTHS[+m.slice(5) - 1]}</b><p>Tap + to add what came in or went out, or import a statement.</p><div class="btnrow" style="width:100%"><button class="btn primary" data-act="add">${icon('plus', 'sm')} Add</button><button class="btn" data-act="tab" data-tab="import">${icon('upload', 'sm')} Import</button></div></div></div>`;
+    h += `<div class="card"><div class="empty">${nestArt(true)}<b>The nest is quiet in ${mon}</b><p>Tap + to add what came in or went out, or import a statement.</p><div class="btnrow" style="width:100%"><button class="btn primary" data-act="add">${icon('plus', 'sm')} Add</button><button class="btn" data-act="tab" data-tab="import">${icon('upload', 'sm')} Import</button></div></div></div>`;
     return h + goalsStrip();
   }
-  // where it went
+  // where it went: highlighter strokes
   const cats = Object.entries(t.byCat).map(([id, v]) => ({ c: catOf(id), v })).sort((a, b) => b.v - a.v);
   for (const c of activeCats('spent', sc)) if (c.budget > 0 && !t.byCat[c.id]) cats.push({ c, v: 0 });
   const max = Math.max(...cats.map(x => x.v), 1);
-  h += `<section class="card"><div class="card-h"><h2>Where it went</h2><button class="link" data-act="budgets">${B ? 'Budgets' : 'Set budgets'}</button></div>
-    <div class="stack" aria-hidden="true">${cats.filter(x => x.v > 0).map(({ c, v }) => `<i style="flex:${v};background:${c.color}"></i>`).join('')}</div><div>
-    ${cats.slice(0, 8).map(({ c, v }, i) => {
+  h += `<section class="bare"><div class="card-h"><h2>Where it went</h2><button class="link" data-act="budgets">${B ? 'budgets' : 'set budgets'}</button></div><div class="hls">
+    ${cats.slice(0, 7).map(({ c, v }, i) => {
       const b = +c.budget || 0, over = b && v > b;
-      const right = b ? (over ? `<span class="over">${fmt(v - b)} over</span>` : `<span>${fmt(v)} <em>of ${fmtK(b)}</em></span>`) : `<span>${fmt(v)}</span>`;
-      return `<button class="crow" data-act="catlist" data-id="${esc(c.id)}" style="--i:${i}"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><div style="min-width:0"><div class="c-top"><b>${esc(c.name)}</b>${right}</div>
-        <div class="bar" style="--c:${over ? 'var(--out)' : c.color}"><i style="width:${Math.min(100, (b ? v / b : v / max) * 100)}%"></i></div></div></button>`;
-    }).join('')}${cats.length > 8 ? `<button class="link" data-act="tab" data-tab="insights" style="margin-top:6px">See all ${cats.length} categories</button>` : ''}</div></section>`;
+      const note = over ? `${fmtK(v - b)} over!` : i === 0 && t.spent && v / t.spent > 0.3 ? 'big one!' : '';
+      return `<button class="crow" data-act="catlist" data-id="${esc(c.id)}" style="${tints(over ? '#D9483B' : c.color)};--i:${i}"><span class="cn">${esc(c.name)}</span>
+        <span class="hl"><i style="width:${Math.max(2, Math.min(100, (b ? v / b : v / max) * 100))}%"></i>${b && !over ? `<em style="left:100%"></em>` : ''}</span>
+        <span class="ca"><b class="num">${fmt(v)}</b>${b ? `<small>of ${fmtK(b)}</small>` : ''}</span>${note ? `<span class="side hand">← ${note}</span>` : ''}</button>`;
+    }).join('')}</div>${cats.length > 7 ? `<button class="link" data-act="tab" data-tab="insights">see all ${cats.length} →</button>` : ''}</section>`;
+  // coming up (autopays already placed in this month, still ahead)
+  if (isCur) {
+    const up = list.filter(e => e.source === 'auto' && e.date > today()).sort((a, b) => a.date.localeCompare(b.date));
+    if (up.length) h += `<section class="bare"><div class="card-h"><h2>Coming up</h2><span class="small muted">${fmt(up.reduce((s, e) => s + +e.amount, 0))} on autopay</span></div>
+      <div class="clip">${up.slice(0, 6).map(e => { const c = catOf(e.category_id); return `<button class="up" data-act="edit" data-id="${e.id}"><span class="up-d"><b>${+e.date.slice(8)}</b>${mShort(e.date)}</span><span class="up-n">${esc(e.note || c.name)}</span><span class="num">${fmt(e.amount)}</span></button>`; }).join('')}</div></section>`;
+  }
   // who spent
   if (!biz && t.spent) {
     const W = t.byWho, tot = t.spent;
-    h += `<section class="card who"><div class="card-h"><h2>Who spent it</h2><span class="small muted">all counts as household</span></div>
-      <div class="whobar">${['me', 'trisha', 'joint'].filter(w => W[w]).map(w => `<i class="w-${w}" style="flex:${W[w]}"></i>`).join('')}</div>
-      <div class="wholist">${['me', 'trisha', 'joint'].map(w => `<button class="whoi" data-act="whof" data-w="${w}">${avatar(w)}<span><b>${esc(whoName(w))}</b><small>${fmt(W[w] || 0)} · ${Math.round((W[w] || 0) / tot * 100)}%</small></span></button>`).join('')}</div></section>`;
+    h += `<section class="bare"><div class="card-h"><h2>Who spent it</h2><span class="small muted">all of it is household</span></div><div class="clip who">
+      <div class="whobar">${['me', 'joint', 'trisha'].filter(w => W[w]).map(w => `<i class="w-${w}" style="flex:${W[w]}"></i>`).join('')}</div>
+      <div class="wholist">${['me', 'joint', 'trisha'].map(w => `<button class="whoi" data-act="whof" data-w="${w}">${avatar(w)}<span><b>${esc(whoName(w))}</b><small class="num">${fmtK(W[w] || 0)} · ${Math.round((W[w] || 0) / tot * 100)}%</small></span></button>`).join('')}</div></div></section>`;
   }
   h += goalsStrip();
-  const rec = list.filter(e => e.date <= today()).sort(byDateDesc).slice(0, 6);
-  if (rec.length) h += `<section class="card"><div class="card-h"><h2>Latest</h2><button class="link" data-act="tab" data-tab="entries">See all</button></div><div class="rows">${rec.map(entryRow).join('')}</div></section>`;
+  const rec = list.filter(e => e.date <= today()).sort(byDateDesc).slice(0, 5);
+  if (rec.length) h += `<section class="bare"><div class="card-h"><h2>Latest</h2><button class="link" data-act="tab" data-tab="entries">see all →</button></div><div class="clip rows">${rec.map(entryRow).join('')}</div></section>`;
   return h;
 }
 function avgMonthlySpend(m, n = 3, v = S.view) {
@@ -284,9 +289,37 @@ function dueDate(p, m = thisMonth()) { const last = daysIn(m); return `${m}-${pa
 function goalsStrip() {
   if (S.view === 'business') return '';
   const gs = S.goals.filter(g => !g.archived);
-  return `<section class="card goals"><div class="card-h"><h2>Saving for</h2><button class="link" data-act="goals">${gs.length ? 'All goals' : 'Add a goal'}</button></div>
-  ${gs.length ? `<div class="hscroll">${gs.map(g => { const s = goalSaved(g), p = g.target ? s / g.target : 0;
-    return `<button class="gmini" data-act="goal" data-id="${g.id}" style="--c:${g.color}">${jarArt(p, g.color)}<div style="min-width:0"><b>${esc(g.name)}</b><div class="small muted">${g.target ? `${fmtK(s)} of ${fmtK(g.target)}` : 'Set a target'}</div>${g.target ? `<div class="small" style="color:var(--c);font-weight:700">${Math.round(p * 100)}%</div>` : ''}</div></button>`; }).join('')}</div>` : `<p class="small muted" style="margin:0">Log money as Saved → Towards a goal and the jars fill up.</p>`}</section>`;
+  return `<section class="bare"><div class="card-h"><h2>Saving for</h2><button class="link" data-act="goals">${gs.length ? 'all goals' : 'add a goal'}</button></div>
+  ${gs.length ? `<div class="hscroll postrow">${gs.map((g, i) => goalCard(g, i, true)).join('')}</div>` : `<p class="hand note-l">Log money as Saved → towards a goal, and it shows up here.</p>`}</section>`;
+}
+function goalMeta(g, s) {
+  if (!g.target) return 'tap to set a target';
+  const left = Math.max(0, g.target - s);
+  if (!left) return 'done! well saved';
+  if (g.target_date) { const [y, m] = g.target_date.split('-').map(Number), [y0, m0] = thisMonth().split('-').map(Number); const n = (y - y0) * 12 + (m - m0) + 1;
+    return n > 0 ? `${fmtK(Math.ceil(left / n / 100) * 100)} a month to make it by ${mShort(g.target_date.slice(0, 7))} ${y}` : `${fmtK(left)} still to go`; }
+  return `${fmtK(left)} to go`;
+}
+function goalArt(g) {
+  const k = 'class="ga"';
+  const A = {
+    car: `<path ${k} d="M12 64 l10 -20 h46 l10 20 v12 h-66z" fill="#fff"/><path ${k} d="M28 46 h32 l7 14 h-46z" fill="#CFE3F7"/><circle cx="30" cy="77" r="7" fill="#2A3352"/><circle cx="66" cy="77" r="7" fill="#2A3352"/><path ${k} d="M4 86 H92"/>`,
+    home: `<path ${k} d="M16 50 L48 24 L80 50 V86 H16Z" fill="#fff"/><rect ${k} x="40" y="62" width="16" height="24" fill="#FFE27A"/><rect ${k} x="22" y="56" width="12" height="10" fill="#CFE3F7"/><path ${k} d="M66 34 V22 h8 v19" fill="#fff"/>`,
+    key: `<path ${k} d="M16 50 L48 24 L80 50 V86 H16Z" fill="#fff"/><rect ${k} x="40" y="62" width="16" height="24" fill="#FFE27A"/><rect ${k} x="22" y="56" width="12" height="10" fill="#CFE3F7"/>`,
+    plane: `<circle ${k} cx="70" cy="28" r="10" fill="#FFE27A"/><path ${k} d="M2 86 C18 70 34 74 48 80 S80 72 94 82 V96 H2Z" fill="#9ED8FF"/><path ${k} d="M30 76 V44 M30 44 c-10 -2 -16 4 -18 8 M30 44 c8 -6 16 -2 18 4 M30 44 c-4 -8 2 -14 8 -14" fill="none"/>`,
+    heart: `<path ${k} d="M48 80 C20 60 14 44 22 34 C30 24 44 28 48 38 C52 28 66 24 74 34 C82 44 76 60 48 80Z" fill="#fff"/><path ${k} d="M30 40 q4 -6 10 -4" fill="none"/>`,
+    gift: `<rect ${k} x="18" y="42" width="60" height="42" fill="#fff"/><rect ${k} x="14" y="32" width="68" height="12" fill="#FFE27A"/><path ${k} d="M48 32 V84 M48 32 c-6 -12 -22 -12 -18 -2 c2 4 12 2 18 2 c6 0 16 2 18 -2 c4 -10 -12 -10 -18 2" fill="none"/>`,
+    book: `<path ${k} d="M14 30 Q32 24 48 32 Q64 24 82 30 V78 Q64 72 48 80 Q32 72 14 78Z" fill="#fff"/><path ${k} d="M48 32 V80" fill="none"/>`
+  };
+  const art = A[g.icon] || `<g transform="translate(24 24) scale(2)" style="color:#2A3352">${icon(g.icon || 'target')}</g>`;
+  return `<svg viewBox="0 0 96 96" aria-hidden="true">${art}</svg>`;
+}
+const dots = (p, n = 10) => `<span class="dots" aria-hidden="true">${Array.from({ length: n }, (_, i) => `<i class="${i < Math.round(p * n) ? 'f' : ''}" style="--i:${i}"></i>`).join('')}</span>`;
+function goalCard(g, i, mini) {
+  const s = goalSaved(g), p = g.target ? Math.min(1, s / g.target) : 0, rot = [-1.4, 1.1, -0.7, 1.5][i % 4];
+  return `<button class="pcard${mini ? ' mini' : ''}" data-${mini ? 'act="goal" data-id' : 'gid'}="${g.id}" style="--r:${rot}deg;${tints(g.color)}"><i class="tape" aria-hidden="true"></i>
+    <span class="pic" style="background:${mix(g.color, '#FFFFFF', 0.6)}">${goalArt(g)}${g.target ? `<span class="stampd">${Math.round(p * 100)}%</span>` : ''}</span>
+    <span class="pt"><b class="gname">${esc(g.name)}</b><span class="amt"><b class="num">${fmtK(s)}</b>${g.target ? ` <span>of ${fmtK(g.target)}</span>` : ''}</span>${g.target ? dots(p) : ''}<span class="gmeta">${esc(goalMeta(g, s))}</span></span></button>`;
 }
 function entryRow(e) {
   const c = catOf(e.category_id), g = e.goal_id ? goalOf(e.goal_id) : null;
@@ -336,22 +369,22 @@ function viewInsights() {
   const topCat = Object.entries(t.byCat).sort((a, b) => b[1] - a[1])[0];
   const jumps = Object.entries(t.byCat).map(([id, v]) => ({ id, v, d: v - (prevCats[id] || 0) })).filter(x => prevCats[x.id] !== undefined).sort((a, b) => b.d - a.d);
   const diff = avg ? (t.spent - avg) / avg : 0;
-  h += `<section class="card story"><div class="story-ic">${icon('sparkle')}</div><p>${t.spent ? `${m === thisMonth() ? 'So far you have spent' : 'You spent'} <b>${fmt(t.spent)}</b> in ${MONTHS[+m.slice(5) - 1]}${avg ? `, ${Math.abs(Math.round(diff * 100))}% ${diff >= 0 ? 'more' : 'less'} than your usual ${fmt(avg)}` : ''}.` : `Nothing spent in ${MONTHS[+m.slice(5) - 1]} yet.`}
-    ${topCat ? ` ${esc(catOf(topCat[0]).name)} took the most at ${fmt(topCat[1])}.` : ''}${jumps[0] && jumps[0].d > 1000 ? ` The biggest jump was ${esc(catOf(jumps[0].id).name)}, up ${fmt(jumps[0].d)}.` : ''}</p></section>`;
+  h += `<section class="bare story"><p class="hand">${t.spent ? `${m === thisMonth() ? 'So far' : MONTHS[+m.slice(5) - 1]} cost <u>${fmtK(t.spent)}</u>${avg ? `, ${Math.abs(Math.round(diff * 100))}% ${diff >= 0 ? 'more' : 'less'} than usual (${fmtK(avg)})` : ''}.` : `Nothing spent in ${MONTHS[+m.slice(5) - 1]} yet.`}
+    ${topCat ? ` ${esc(catOf(topCat[0]).name)} took the most, ${fmtK(topCat[1])}.` : ''}${jumps[0] && jumps[0].d > 1000 ? ` Biggest jump: ${esc(catOf(jumps[0].id).name)}, up ${fmtK(jumps[0].d)}.` : ''}</p></section>`;
   // trend
-  h += `<section class="card"><div class="card-h"><h2>Six-month trend</h2><span class="legend-inline"><i class="dot spent"></i>Spent${biz ? '' : '<i class="dot saved"></i>Saved'}<i class="dot in"></i>Came in</span></div>${trendChart(months, biz)}</section>`;
+  h += `<section class="card graph"><div class="card-h"><h2>Six months</h2><span class="legend-inline"><i class="dot spent"></i>Spent${biz ? '' : '<i class="dot saved"></i>Saved'}<i class="dot in"></i>Came in</span></div>${trendChart(months, biz)}</section>`;
   // categories
   const ents = Object.entries(t.byCat).sort((a, b) => b[1] - a[1]);
   if (ents.length) {
     h += `<section class="card"><div class="card-h"><h2>By category</h2><span class="small muted">vs your 3-month average</span></div>
-      <div class="donutwrap">${donut(ents.map(([id, v]) => ({ c: catOf(id).color, v })), t.spent)}<div class="donut-c"><b class="num">${fmtK(t.spent)}</b><span>spent</span></div></div>
+      <div class="donutwrap">${donut(ents.map(([id, v]) => ({ c: mix(catOf(id).color, '#FFFFFF', 0.35), v })), t.spent)}<div class="donut-c"><b class="num">${fmtK(t.spent)}</b><span>spent</span></div></div>
       <div class="rows">${ents.map(([id, v]) => { const c = catOf(id), a = prevCats[id], ch = a ? (v - a) / a : null;
         return `<button class="row slim" data-act="catlist" data-id="${esc(id)}"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><div class="r-main"><div class="r-name">${esc(c.name)}</div><div class="r-sub">${Math.round(v / t.spent * 100)}% of spending${a ? ` · usually ${fmt(a)}` : ''}</div></div>
           <div class="r-amt num">${fmt(v)}${ch != null && Math.abs(ch) >= 0.1 ? `<span class="delta ${ch > 0 ? 'up' : 'down'}">${ch > 0 ? '▲' : '▼'} ${Math.abs(Math.round(ch * 100))}%</span>` : ''}</div></button>`; }).join('')}</div></section>`;
   }
   // insights to act on
   const ins = insightsFor(m);
-  if (ins.length) h += `<section class="card"><div class="card-h"><h2>Worth a look</h2></div><div class="insl">${ins.map(i => `<div class="ins tone-${i.tone}"><span class="ins-ic">${icon(i.icon, 'sm')}</span><div><b>${esc(i.title)}</b><p>${esc(i.body)}</p></div></div>`).join('')}</div></section>`;
+  if (ins.length) h += `<section class="sticky s-p todo"><i class="tape" aria-hidden="true"></i><h2 class="hand">Things to try</h2>${ins.map(i => `<div class="td t-${i.tone}"><span class="box" aria-hidden="true">${i.tone === 'good' ? '✓' : i.tone === 'bad' ? '!' : ''}</span><div><b>${esc(i.title)}</b><p>${esc(i.body)}</p></div></div>`).join('')}</section>`;
   // budget plan
   if (!biz) h += budgetPlan(m, t);
   // daily rhythm
@@ -379,11 +412,11 @@ function trendChart(months, biz) {
       ${biz ? '' : `<rect x="${x0}" y="${ysv}" width="${bw}" height="${Math.max(0, ys - ysv)}" rx="3" class="tc-saved"/>`}
       <rect x="${x0}" y="${ys}" width="${bw}" height="${Math.max(0, H - B - ys)}" rx="3" class="tc-spent"/>
       ${x.spent ? `<text x="${x0 + bw / 2}" y="${ysv - 4}" class="tc-val" text-anchor="middle">${fmtK(x.spent).replace('₹', '')}</text>` : ''}
-      <text x="${x0 + bw / 2}" y="${H - 6}" class="tc-ax${cur ? ' cur' : ''}" text-anchor="middle">${mShort(x.m)}</text></g>`; }).join('');
+      <text x="${x0 + bw / 2}" y="${H - 5}" class="tc-ax${cur ? ' cur' : ''}" text-anchor="middle">${mShort(x.m)}</text>${cur ? `<ellipse cx="${x0 + bw / 2}" cy="${H - 10}" rx="${cw * 0.42}" ry="10" class="tc-circ" transform="rotate(-6 ${x0 + bw / 2} ${H - 10})"/>` : ''}</g>`; }).join('');
   const pts = months.map((x, i) => [L + i * cw + cw / 2, y(x.in), x.in]).filter(p => p[2] > 0);
   const line = pts.length > 1 ? `<polyline points="${pts.map(p => p[0] + ',' + p[1]).join(' ')}" class="tc-line"/>` : '';
   const dots = pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="3.5" class="tc-dot"/>`).join('');
-  return `<div class="chartwrap"><svg viewBox="0 0 ${W} ${H}" class="trend" role="img" aria-label="Spending by month">${ticks}${bars}${line}${dots}</svg></div><p class="small muted" style="margin:0">Tap a month to see it.</p>`;
+  return `<div class="chartwrap"><svg viewBox="0 0 ${W} ${H}" class="trend" role="img" aria-label="Spending by month">${ticks}${bars}${line}${dots}</svg></div><p class="hand note-s">tap a month to see it</p>`;
 }
 function donut(segs, total) {
   const C = 2 * Math.PI * 42; let off = 0;
@@ -507,7 +540,7 @@ function historyGroups(kind, scope) {
 function suggestions(kind, scope) {
   return historyGroups(kind, scope).filter(g => g.note).sort((a, b) => b.count - a.count || b.last.localeCompare(a.last)).slice(0, 10);
 }
-const catChip = (c, on) => `<button type="button" class="cp" data-c="${c.id}" aria-pressed="${on}"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><span>${esc(c.name)}</span></button>`;
+const catChip = (c, on) => `<button type="button" class="cp" data-c="${c.id}" aria-pressed="${on}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span>${esc(c.name)}</span></button>`;
 function entrySheet(id, preset, presetDate) {
   const ex = id ? S.entries.find(e => e.id === id) : null;
   const defWho = S.person;
@@ -518,6 +551,7 @@ function entrySheet(id, preset, presetDate) {
     ${ex && ex.source === 'auto' ? `<div class="statusbar">Added automatically by Autopay. Change anything here; deleting skips this month.</div>` : ''}
     <div class="seg kindseg" id="f-kind"></div>
     <div class="amount"><span>₹</span><input id="f-amt" inputmode="decimal" placeholder="0" value="${esc(F.amount)}" aria-label="Amount" autocomplete="off"></div>
+    <div class="amt-und">${under('ink')}</div>
     <div class="field" id="f-suggw"></div>
     <div class="field"><span class="flabel">Category</span><div class="catpick" id="f-cats"></div></div>
     <div class="field" id="f-goalw"></div>
@@ -525,7 +559,7 @@ function entrySheet(id, preset, presetDate) {
     <div class="field"><span class="flabel">When</span><div class="chips" id="f-when"></div><input class="inp" type="date" id="f-date" value="${esc(F.date)}"></div>
     <div class="field"><span class="flabel">Who ${F.kind === 'in' ? 'got it' : 'paid'}</span><div class="seg" id="f-who"></div></div>
     <label class="check"><input type="checkbox" id="f-biz" ${F.scope === 'business' ? 'checked' : ''}> Yoga business (kept out of household totals)</label>
-    <div class="btnrow"><button class="btn primary" id="f-save">${ex ? 'Save changes' : 'Add'}</button>${ex ? '' : `<button class="btn" id="f-again">Add + next</button>`}</div>
+    <div class="btnrow">${ex ? '' : `<button class="btn" id="f-again">Add + next</button>`}<button class="btn primary" id="f-save">${ex ? 'Save changes' : 'Save'}</button></div>
     ${ex ? '' : `<button class="link" data-close data-go="import" style="align-self:center">${icon('upload', 'sm')} Or import a statement or screenshot</button>`}
     ${ex ? `<div class="btnrow"><button class="btn" id="f-preset">${icon('star', 'sm')} Make quick-add</button><button class="btn danger" id="f-del">Delete</button></div>` : ''}`, p => {
     const drawS = () => {
@@ -543,7 +577,7 @@ function entrySheet(id, preset, presetDate) {
       const sg = ex ? [] : suggestions(F.kind, F.scope);
       const curNote = ($('#f-note', p)?.value ?? F.note).trim().toLowerCase();
       $('#f-suggw', p).innerHTML = sg.length ? `<span class="flabel">Your usual ones</span><div class="sugg">${sg.map((x, i) => { const c = catOf(x.category_id), on = F.category_id === x.category_id && curNote === x.note.toLowerCase();
-        return `<button type="button" class="sg" data-sg="${i}" aria-pressed="${on}"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><span style="min-width:0"><b>${esc(x.note || c.name)}</b><small>${esc(c.name)}</small></span></button>`; }).join('')}</div>` : '';
+        return `<button type="button" class="sg" data-sg="${i}" aria-pressed="${on}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span style="min-width:0"><b>${esc(x.note || c.name)}</b><small>${esc(c.name)}</small></span></button>`; }).join('')}</div>` : '';
       p._sugg = sg;
     };
     drawS();
@@ -713,12 +747,9 @@ function presetEdit(id, from) {
 /* goals */
 function goalsSheet() {
   const gs = S.goals.filter(g => !g.archived);
-  openSheet(`${shHead('Goals')}${gs.map(g => { const s = goalSaved(g), p = g.target ? Math.min(100, s / g.target * 100) : 0, C = 2 * Math.PI * 25;
-    let meta = 'Set a target to see progress.';
-    if (g.target) { const left = Math.max(0, g.target - s); if (!left) meta = 'Reached. Well done.'; else if (g.target_date) { const [y, m] = g.target_date.split('-').map(Number), [y0, m0] = thisMonth().split('-').map(Number); const n = (y - y0) * 12 + (m - m0) + 1; meta = n > 0 ? `${fmt(Math.ceil(left / n))} a month reaches it by ${mShort(g.target_date.slice(0, 7))} ${y}` : `${fmt(left)} still to go`; } else meta = `${fmt(left)} to go`; }
-    return `<button class="goal" data-gid="${g.id}" style="text-align:left;width:100%"><div class="ring"><svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="25" fill="none" stroke="var(--surface-2)" stroke-width="7"/><circle cx="30" cy="30" r="25" fill="none" stroke="${g.color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C * p / 100} ${C}"/></svg><span class="num">${Math.round(p)}%</span></div>
-    <div style="min-width:0"><b>${esc(g.name)}</b><div class="num" style="font-weight:600">${fmt(s)}${g.target ? ` <span class="muted" style="font-weight:500">of ${fmt(g.target)}</span>` : ''}</div><div class="small muted">${esc(meta)}</div></div></button>`; }).join('<hr style="border:0;border-top:1px solid var(--line);margin:0">') || '<p class="small muted">No goals yet.</p>'}
-    <button class="btn primary block" data-gid="">${icon('plus', 'sm')} New goal</button>`, p => { p.onclick = e => { const b = e.target.closest('[data-gid]'); if (b) goalEdit(b.dataset.gid || null); }; });
+  openSheet(`${shHead('Saving for')}<p class="hand note-l" style="margin:0">Every SIP or saving you log towards a goal fills its postcard up.</p>
+    <div class="postlist">${gs.map((g, i) => goalCard(g, i)).join('') || '<p class="small muted">No goals yet.</p>'}</div>
+    <button class="btn dashed block" data-gid="">${icon('plus', 'sm')} Add a goal</button>`, p => { p.onclick = e => { const b = e.target.closest('[data-gid]'); if (b) goalEdit(b.dataset.gid || null); }; });
 }
 function goalEdit(id) {
   const ex = id ? S.goals.find(g => g.id === id) : null;
@@ -1051,6 +1082,7 @@ document.addEventListener('click', async e => {
   else if (a === 'whof') { if (S.tab === 'entries') { S.whoFilter = b.dataset.w; render(); } else { S.whoFilter = b.dataset.w; S.kindFilter = 'spent'; go('entries'); } }
   else if (a === 'tab-import') go('import');
   else if (a === 'add') entrySheet(null);
+  else if (a === 'addin') entrySheet(null, { kind: 'in', scope: scopeOfView(), who: S.person, label: 'Came in' });
   else if (a === 'edit') entrySheet(b.dataset.id);
   else if (a === 'preset') { const p = S.presets.find(x => x.id === b.dataset.id); if (p) entrySheet(null, p); }
   else if (a === 'presets') presetsSheet();
