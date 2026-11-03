@@ -64,6 +64,7 @@ create table if not exists public.entries (
   scope       text not null default 'home' check (scope in ('home','business')),
   paid_with   text not null default '',
   source      text not null default 'manual',
+  preset_id   uuid,
   import_key  text unique,
   created_by  text default (auth.jwt() ->> 'email'),
   created_at  timestamptz not null default now()
@@ -81,8 +82,13 @@ create table if not exists public.presets (
   note        text not null default '',
   who         text not null default 'joint' check (who in ('me','trisha','joint')),
   scope       text not null default 'home' check (scope in ('home','business')),
+  repeat      boolean not null default false,   -- shows under "Due this month" on Home
+  due_day     int check (due_day between 1 and 31),
   sort        int not null default 0
 );
+
+alter table public.entries drop constraint if exists entries_preset_id_fkey;
+alter table public.entries add constraint entries_preset_id_fkey foreign key (preset_id) references public.presets(id) on delete set null;
 
 -- ---------- auto-categorise rules (used by imports) ----------
 create table if not exists public.rules (

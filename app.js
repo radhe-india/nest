@@ -169,11 +169,12 @@ function viewHome() {
     <div class="splitbar" aria-hidden="true"><i style="width:${t.spent / base * 100}%;background:#FF9AA0"></i>${biz ? '' : `<i style="width:${t.saved / base * 100}%;background:#C9C2FF"></i>`}<i style="width:${Math.max(0, left) / base * 100}%;background:#fff"></i></div>
     <div class="foot">${t.in ? `${biz ? '' : `Saved ${Math.round(t.saved / t.in * 100)}% of what came in. `}Pink is spent${biz ? '' : ', lilac is saved'}, white is left.` : S.view === 'me' || S.view === 'trisha' ? 'Shared costs marked Joint show under Together.' : 'Add your salary or income to see what is left.'}</div>
   </section>`;
+  if (S.month === thisMonth()) h += dueCard();
   // quick add
   const sc = scopeOfView();
   const ps = S.presets.filter(p => (p.scope || 'home') === sc);
   h += `<section class="card"><div class="card-h"><h2>Quick add</h2><button class="link" data-act="presets">Edit</button></div>
-    ${ps.length ? `<div class="quick">${ps.map(p => { const c = catOf(p.category_id); return `<button class="qbtn" data-act="preset" data-id="${p.id}"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><span><b>${esc(p.label)}</b><small>${p.amount ? fmt(p.amount) : KIND[p.kind]}</small></span></button>`; }).join('')}</div>`
+    ${ps.length ? `<div class="quick">${ps.map(p => { const c = catOf(p.category_id); return `<button class="qbtn" data-act="preset" data-id="${p.id}"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><span><b>${esc(p.label)}</b><small>${p.repeat ? '<span class="rep">Monthly</span> · ' : ''}${p.amount ? fmt(p.amount) : KIND[p.kind]}</small></span></button>`; }).join('')}</div>`
       : `<p class="small muted" style="margin:0">Make one-tap buttons for things you log often, like rent or groceries.</p>`}
   </section>`;
   if (!list.length) {
@@ -197,6 +198,26 @@ function viewHome() {
   const rec = list.slice().sort(byDateDesc).slice(0, 6);
   h += `<section class="card"><div class="card-h"><h2>Latest</h2><button class="link" data-act="tab" data-tab="entries">See all</button></div><div class="rows">${rec.map(entryRow).join('')}</div></section>`;
   return h;
+}
+/* monthly items: logged or still due */
+function presetLogged(p, m = thisMonth()) {
+  const note = (p.note || '').trim().toLowerCase();
+  return S.entries.filter(e => (e.date || '').startsWith(m) && (e.preset_id === p.id || (e.kind === p.kind && e.category_id === p.category_id && note && (e.note || '').trim().toLowerCase() === note))).sort(byDateDesc)[0];
+}
+function dueDate(p, m = thisMonth()) { const [y, mo] = m.split('-').map(Number); const last = new Date(y, mo, 0).getDate(); return `${m}-${pad(Math.min(p.due_day || 1, last))}`; }
+const dueLabel = d => { const l = dayLabel(d); return l === 'Today' || l === 'Yesterday' ? l.toLowerCase() : l; };
+function dueCard() {
+  const sc = scopeOfView();
+  const ps = S.presets.filter(p => p.repeat && (p.scope || 'home') === sc && (S.view === 'together' || S.view === 'business' || p.who === S.view));
+  if (!ps.length) return '';
+  const items = ps.map(p => ({ p, e: presetLogged(p), d: dueDate(p) })).sort((a, b) => (!!a.e - !!b.e) || a.d.localeCompare(b.d));
+  const open = items.filter(x => !x.e), sum = open.reduce((t, x) => t + (+x.p.amount || 0), 0);
+  return `<section class="card"><div class="card-h"><h2>Due this month</h2><span class="small muted">${open.length ? `${open.length} to log${sum ? ' · ' + fmt(sum) : ''}` : 'All logged'}</span></div><div>
+    ${items.map(({ p, e, d }) => { const c = catOf(p.category_id), late = !e && d < today();
+      return `<div class="due"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><div style="min-width:0"><b>${esc(p.label)}</b>
+        ${e ? `<small>Logged ${fmt(e.amount)} on ${esc(dayLabel(e.date))}</small>` : `<small class="${late ? 'late' : ''}">${late ? 'Was due' : 'Due'} ${esc(dueLabel(d))}${p.amount ? ' · ' + fmt(p.amount) : ''}</small>`}</div>
+        ${e ? `<span class="done">${icon('check', 'sm')} Done</span>` : `<button class="btn primary" data-act="logdue" data-id="${p.id}">Log</button>`}</div>`; }).join('')}
+  </div></section>`;
 }
 function goalsStrip() {
   if (S.view === 'business') return '';
@@ -279,14 +300,45 @@ function usageOrder(kind, scope) {
   for (const e of S.entries) if (e.kind === kind && e.date >= cut) cnt[e.category_id] = (cnt[e.category_id] || 0) + 1;
   return activeCats(kind, scope).sort((a, b) => (cnt[b.id] || 0) - (cnt[a.id] || 0) || (a.sort || 0) - (b.sort || 0));
 }
-function entrySheet(id, preset) {
+/* what you usually log: groups of category + note from the last 6 months */
+function historyGroups(kind, scope) {
+  const cut = addM(thisMonth(), -6) + '-01', G = {};
+  for (const e of S.entries) {
+    if (e.kind !== kind || (e.scope || 'home') !== scope || e.date < cut || !e.category_id) continue;
+    const note = (e.note || '').trim(), k = e.category_id + '|' + note.toLowerCase();
+    const g = G[k] = G[k] || { category_id: e.category_id, note, amounts: [], last: '', whos: {} };
+    g.amounts.push(+e.amount); if (e.date > g.last) g.last = e.date; g.whos[e.who] = (g.whos[e.who] || 0) + 1;
+  }
+  return Object.values(G).map(g => { const a = g.amounts.slice().sort((x, y) => x - y), med = a[Math.floor(a.length / 2)];
+    const fixed = a.length >= 2 && a.every(x => Math.abs(x - med) <= Math.max(1, med * 0.02));
+    const who = Object.entries(g.whos).sort((x, y) => y[1] - x[1])[0][0];
+    return { category_id: g.category_id, note: g.note, count: a.length, amount: fixed ? med : Math.round(med / 10) * 10, fixed, last: g.last, who }; });
+}
+function suggestions(kind, scope, catId) {
+  let gs = historyGroups(kind, scope);
+  if (catId) gs = gs.filter(g => g.category_id === catId);
+  return gs.sort((a, b) => b.count - a.count || b.last.localeCompare(a.last)).slice(0, 8);
+}
+function typical(kind, catId, note, scope = 'home') {
+  if (!catId) return null;
+  const gs = historyGroups(kind, scope).filter(g => g.category_id === catId);
+  const n = (note || '').trim().toLowerCase();
+  const g = n && gs.find(x => x.note.toLowerCase() === n);
+  if (g) return g;
+  const all = gs.flatMap(x => Array(x.count).fill(x.amount)).sort((a, b) => a - b);
+  return all.length >= 2 ? { amount: Math.round(all[Math.floor(all.length / 2)] / 10) * 10, fixed: false, note: '' } : null;
+}
+function entrySheet(id, preset, presetDate) {
   const ex = id ? S.entries.find(e => e.id === id) : null;
   const defWho = S.view === 'me' || S.view === 'trisha' ? S.view : S.person;
   const F = ex ? { ...ex } : { kind: 'spent', amount: '', category_id: '', goal_id: null, note: '', who: defWho, scope: scopeOfView(), paid_with: '', date: today() };
-  if (preset) Object.assign(F, { kind: preset.kind, amount: preset.amount || '', category_id: preset.category_id || '', goal_id: preset.goal_id || null, note: preset.note || '', who: preset.who || F.who, scope: preset.scope || 'home' });
+  if (preset) Object.assign(F, { kind: preset.kind, amount: preset.amount || '', category_id: preset.category_id || '', goal_id: preset.goal_id || null, note: preset.note || '', who: preset.who || F.who, scope: preset.scope || 'home', preset_id: preset.id && S.presets.some(x => x.id === preset.id) ? preset.id : null });
+  if (presetDate) F.date = presetDate;
   openSheet(`${shHead(ex ? 'Edit entry' : preset ? esc(preset.label) : 'Add an entry')}
     <div class="seg kindseg" id="f-kind"></div>
     <div class="amount"><span>₹</span><input id="f-amt" inputmode="decimal" placeholder="0" value="${esc(F.amount)}" aria-label="Amount" autocomplete="off"></div>
+    <p class="amount-hint" id="f-hint"></p>
+    <div class="field" id="f-suggw"></div>
     <div class="field"><span class="flabel">Category</span><div class="catgrid" id="f-cats"></div></div>
     <div class="field" id="f-goalw"></div>
     <div class="field"><label for="f-note">What for</label><input class="inp" id="f-note" list="f-notes" value="${esc(F.note)}" placeholder="e.g. Blinkit, dinner with friends" autocomplete="off"><datalist id="f-notes"></datalist></div>
@@ -310,6 +362,13 @@ function entrySheet(id, preset) {
       if ($('#f-paid', p)) $('#f-paid', p).innerHTML = S.paidWith.map(x => `<button type="button" class="chip" data-p="${esc(x)}" aria-pressed="${F.paid_with === x}">${esc(x)}</button>`).join('');
       const notes = [...new Set(S.entries.filter(e => e.category_id === F.category_id && e.note).sort(byDateDesc).map(e => e.note))].slice(0, 12);
       $('#f-notes', p).innerHTML = notes.map(n => `<option value="${esc(n)}">`).join('');
+      // suggestions from what you usually log
+      const sg = ex ? [] : suggestions(F.kind, F.scope, F.category_id);
+      $('#f-suggw', p).innerHTML = sg.length ? `<span class="flabel">${F.category_id ? 'You usually log' : 'Suggested from your history'}</span><div class="sugg">${sg.map((x, i) => { const c = catOf(x.category_id);
+        return `<button type="button" class="sg" data-sg="${i}"><span class="bub" style="--c:${c.color}">${icon(c.icon)}</span><span style="min-width:0"><b>${esc(x.note || c.name)}</b><small>${x.fixed ? fmt(x.amount) : '~' + fmt(x.amount)} · ${x.count}×</small></span></button>`; }).join('')}</div>` : '';
+      p._sugg = sg;
+      const hint = typical(F.kind, F.category_id, $('#f-note', p)?.value || F.note, F.scope);
+      $('#f-hint', p).textContent = hint && !num($('#f-amt', p).value) ? `Usually ${hint.fixed ? '' : 'around '}${fmt(hint.amount)}${hint.note ? ' for ' + hint.note : ''}` : '';
     };
     drawS();
     p.addEventListener('click', e => {
@@ -320,7 +379,12 @@ function entrySheet(id, preset) {
       else if (b.dataset.d) { F.date = b.dataset.d; $('#f-date', p).value = F.date; drawS(); }
       else if (b.dataset.w) { F.who = b.dataset.w; drawS(); }
       else if (b.dataset.p != null) { F.paid_with = F.paid_with === b.dataset.p ? '' : b.dataset.p; drawS(); }
+      else if (b.dataset.sg != null) { const x = p._sugg[+b.dataset.sg]; F.category_id = x.category_id; F.note = x.note; $('#f-note', p).value = x.note; if (x.fixed && !num($('#f-amt', p).value)) { $('#f-amt', p).value = x.amount; fit(); } if (x.who) F.who = x.who; drawS(); if (!num($('#f-amt', p).value)) $('#f-amt', p).focus(); }
     });
+    const fit = () => { const el = $('#f-amt', p); el.style.width = Math.max(1, (el.value || el.placeholder).length) + 0.6 + 'ch'; };
+    fit(); $('#f-amt', p).addEventListener('input', fit);
+    $('#f-amt', p).addEventListener('input', () => { if ($('#f-hint', p).textContent && num($('#f-amt', p).value)) $('#f-hint', p).textContent = ''; });
+    $('#f-note', p).addEventListener('change', () => { F.note = $('#f-note', p).value; drawS(); });
     $('#f-date', p).onchange = e => { F.date = e.target.value || today(); drawS(); };
     $('#f-biz', p).onchange = e => { F.scope = e.target.checked ? 'business' : 'home'; F.category_id = ''; drawS(); };
     const doSave = async (again) => {
@@ -330,14 +394,14 @@ function entrySheet(id, preset) {
       if (F.category_id === 'goal' && !F.goal_id) { toast('Pick which goal.'); return; }
       const row = { date: F.date || today(), kind: F.kind, amount, category_id: F.category_id, goal_id: F.kind === 'saved' ? F.goal_id : null, note: $('#f-note', p).value.trim(), who: F.who, scope: F.scope, paid_with: F.paid_with || '' };
       $('#f-save', p).disabled = true;
-      const r = await save(async () => ex ? S.db.update('entries', ex.id, row) : S.db.insert('entries', { ...row, source: preset ? 'quick' : 'manual' }));
+      const r = await save(async () => ex ? S.db.update('entries', ex.id, row) : S.db.insert('entries', { ...row, source: preset ? 'quick' : 'manual', preset_id: F.preset_id || null }));
       $('#f-save', p).disabled = false;
       if (!r) return;
       if (ex) S.entries = S.entries.map(x => x.id === ex.id ? r : x); else S.entries.push(r);
       toast(`${ex ? 'Saved' : 'Added'} ${fmt(amount)} ${F.kind === 'in' ? 'in' : F.kind === 'saved' ? 'saved' : 'spent'}`);
       if (!ex && !S.month.startsWith(row.date.slice(0, 7)) && row.date.slice(0, 7) <= thisMonth()) S.month = row.date.slice(0, 7);
       render();
-      if (again) { $('#f-amt', p).value = ''; $('#f-note', p).value = ''; $('#f-amt', p).focus(); } else closeSheet();
+      if (again) { $('#f-amt', p).value = ''; fit(); $('#f-note', p).value = ''; F.note = ''; F.preset_id = null; drawS(); $('#f-amt', p).focus(); } else closeSheet();
     };
     $('#f-save', p).onclick = () => doSave(false);
     $('#f-again', p) && ($('#f-again', p).onclick = () => doSave(true));
@@ -351,8 +415,8 @@ function entrySheet(id, preset) {
 
 /* presets */
 function presetsSheet() {
-  openSheet(`${shHead('Quick-add buttons')}<p class="small muted" style="margin:0">These sit on Home. Tap one to log it in a second. Leave the amount empty for things that change each time.</p>
-    <div class="rows">${S.presets.map(pr => { const c = catOf(pr.category_id); return `<button class="row" data-pe="${pr.id}"><span class="bub" style="--c:${c.color}">${icon(c.icon)}</span><div class="r-main"><div class="r-name">${esc(pr.label)}</div><div class="r-sub">${KIND[pr.kind]} · ${esc(c.name)} · ${esc(whoName(pr.who))}${pr.scope === 'business' ? ' · Business' : ''}</div></div><div class="r-amt num">${pr.amount ? fmt(pr.amount) : ''}</div></button>`; }).join('') || '<p class="small muted">No buttons yet.</p>'}</div>
+  openSheet(`${shHead('Quick-add buttons')}<p class="small muted" style="margin:0">These sit on Home. Tap one to log it in a second. Leave the amount empty for things that change each time. Mark bills like rent as monthly and they show under "Due this month" until logged.</p>
+    <div class="rows">${S.presets.map(pr => { const c = catOf(pr.category_id); return `<button class="row" data-pe="${pr.id}"><span class="bub" style="--c:${c.color}">${icon(c.icon)}</span><div class="r-main"><div class="r-name">${esc(pr.label)}</div><div class="r-sub">${pr.repeat ? `Monthly, day ${pr.due_day || 1} · ` : ''}${esc(c.name)} · ${esc(whoName(pr.who))}${pr.scope === 'business' ? ' · Business' : ''}</div></div><div class="r-amt num">${pr.amount ? fmt(pr.amount) : ''}</div></button>`; }).join('') || '<p class="small muted">No buttons yet.</p>'}</div>
     <button class="btn primary block" data-pe="">${icon('plus', 'sm')} New button</button>`, p => {
     p.onclick = e => { const b = e.target.closest('[data-pe]'); if (b) presetEdit(b.dataset.pe || null); };
   });
@@ -367,6 +431,7 @@ function presetEdit(id, from) {
     <div class="grid2"><div class="field"><label for="pe-a">Amount (optional)</label><input class="inp" id="pe-a" inputmode="decimal" value="${F.amount || ''}" placeholder="Ask each time"></div>
     <div class="field"><label for="pe-n">What for</label><input class="inp" id="pe-n" value="${esc(F.note)}" placeholder="e.g. Rent – flat"></div></div>
     <div class="field"><span class="flabel">Whose</span><div class="seg" id="pe-who"></div></div>
+    <div class="repeat"><label class="check"><input type="checkbox" id="pe-rep" ${F.repeat ? 'checked' : ''}> Repeats every month, due on day</label><input class="inp" id="pe-day" inputmode="numeric" value="${F.due_day || ''}" placeholder="1" aria-label="Day of the month"></div>
     <label class="check"><input type="checkbox" id="pe-biz" ${F.scope === 'business' ? 'checked' : ''}> Yoga business</label>
     <button class="btn primary block" id="pe-save">${ex ? 'Save' : 'Add button'}</button>
     ${ex ? `<button class="btn danger block" id="pe-del">Remove button</button>` : ''}<button class="btn block" id="pe-back">Back</button>`, p => {
@@ -383,7 +448,8 @@ function presetEdit(id, from) {
       const label = $('#pe-l', p).value.trim(); if (!label) { toast('Give the button a name.'); return; }
       if (!F.category_id) { toast('Pick a category.'); return; }
       const a = num($('#pe-a', p).value);
-      const row = { label, kind: F.kind, amount: a > 0 ? a : null, category_id: F.category_id, goal_id: F.kind === 'saved' ? F.goal_id || null : null, note: $('#pe-n', p).value.trim(), who: F.who, scope: F.scope, sort: F.sort || 0 };
+      const rep = $('#pe-rep', p).checked, day = Math.min(31, Math.max(1, Math.round(num($('#pe-day', p).value)) || 1));
+      const row = { label, kind: F.kind, amount: a > 0 ? a : null, category_id: F.category_id, goal_id: F.kind === 'saved' ? F.goal_id || null : null, note: $('#pe-n', p).value.trim(), who: F.who, scope: F.scope, sort: F.sort || 0, repeat: rep, due_day: rep ? day : null };
       const r = await save(() => ex ? S.db.update('presets', ex.id, row) : S.db.insert('presets', row), ex ? 'Button saved' : 'Button added');
       if (!r) return;
       S.presets = ex ? S.presets.map(x => x.id === ex.id ? r : x) : [...S.presets, r];
@@ -733,6 +799,7 @@ document.addEventListener('click', async e => {
   else if (a === 'add') entrySheet(null);
   else if (a === 'edit') entrySheet(b.dataset.id);
   else if (a === 'preset') { const p = S.presets.find(x => x.id === b.dataset.id); if (p) entrySheet(null, p); }
+  else if (a === 'logdue') { const p = S.presets.find(x => x.id === b.dataset.id); if (p) { const d = dueDate(p); entrySheet(null, p, d < today() ? d : today()); } }
   else if (a === 'presets') presetsSheet();
   else if (a === 'catlist') { S.catFilter = b.dataset.id; S.kindFilter = 'spent'; go('entries'); }
   else if (a === 'catclear') { S.catFilter = ''; render(); }
