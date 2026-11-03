@@ -265,3 +265,11 @@ details.more[open] summary{margin-bottom:10px}
 .repeat{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
 .repeat .inp{width:5.5em;text-align:center}
 .qbtn .rep{color:var(--accent)}
+
+/* category picker: tidy wrapping chips */
+.catpick{display:flex;flex-wrap:wrap;gap:8px}
+.cp{display:inline-flex;align-items:center;gap:8px;min-height:42px;padding:5px 13px 5px 5px;border-radius:13px;background:var(--surface-2);font-size:14px;font-weight:600;line-height:1.2;color:var(--ink);border:1.5px solid transparent;text-align:left}
+.cp .bub{width:30px;height:30px;border-radius:9px}
+.cp .ic{width:16px;height:16px}
+.cp[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.sg[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}

@@ -82,8 +82,12 @@ create table if not exists public.presets (
   note        text not null default '',
   who         text not null default 'joint' check (who in ('me','trisha','joint')),
   scope       text not null default 'home' check (scope in ('home','business')),
-  repeat      boolean not null default false,   -- shows under "Due this month" on Home
+  auto        boolean not null default false,   -- autopay / SIP: added automatically every month
   due_day     int check (due_day between 1 and 31),
+  paused      boolean not null default false,
+  paid_with   text not null default '',
+  starts_on   date not null default date_trunc('month', current_date)::date,
+  skip_months jsonb not null default '[]'::jsonb,   -- months you deleted the automatic entry
   sort        int not null default 0
 );
 
