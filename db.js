@@ -40,7 +40,7 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Math.random(
 
 export function memoryDB(seed) {
   const T = {};
-  for (const [k, v] of Object.entries(seed)) T[k] = v.map(r => ({ ...r }));
+  for (const [k, v] of Object.entries(seed)) T[k] = v.map(r => ({ ...r, ...(k !== 'settings' && !r.id ? { id: uuid() } : {}) }));
   const keyOf = t => (t === 'categories' || t === 'settings' ? (t === 'settings' ? 'key' : 'id') : 'id');
   return {
     kind: 'demo',
