@@ -1,7 +1,6 @@
-// Your Supabase project. Both values are on Supabase → Project Settings → API.
-// The "anon / publishable" key is safe to keep here: the database only lets
-// people on the members list read or write anything.
+// Supabase project for Nest. The publishable key is safe to be public:
+// row-level security only shows data to emails in the members table.
 window.NEST_CONFIG = {
-  supabaseUrl: '',
-  supabaseKey: ''
+  supabaseUrl: 'https://vcmpbspwvzygrbofobym.supabase.co',
+  supabaseKey: 'sb_publishable_sRnO9lpeVxdHSzdFBo2XdQ_5zi2-nAJ'
 };
