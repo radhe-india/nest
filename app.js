@@ -241,10 +241,13 @@ function viewHome() {
   }
   // quick add
   const sc = scopeOfView();
-  const ps = S.presets.filter(p => !p.auto && (p.scope || 'home') === sc);
-  h += `<section class="bare"><div class="card-h"><h2>Quick add</h2><button class="link" data-act="presets">edit</button></div>
-    ${ps.length ? `<div class="qchips">${ps.map(p => { const c = catOf(p.category_id); return `<button class="qbtn" data-act="preset" data-id="${p.id}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span>${esc(p.label)}</span>${p.amount ? `<small class="num">${fmtK(p.amount)}</small>` : ''}</button>`; }).join('')}</div>`
-      : `<p class="hand note-l">Make one-tap buttons for things you log often, like rent or groceries.</p>`}
+  const allPs = S.presets.filter(p => !p.auto && (p.scope || 'home') === sc);
+  const done = allPs.filter(p => presetMonthly(p) && presetLogged(p, thisMonth()));
+  const ps = allPs.filter(p => !done.includes(p));
+  const qbtn = p => { const c = catOf(p.category_id); return `<button class="qbtn" data-act="preset" data-id="${p.id}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span>${esc(p.label)}</span>${p.amount ? `<small class="num">${fmtK(p.amount)}</small>` : ''}</button>`; };
+  if (allPs.length || !S.presets.length) h += `<section class="bare"><div class="card-h"><h2>Quick add</h2><button class="link" data-act="presets">edit</button></div>
+    ${ps.length ? `<div class="qchips">${ps.map(qbtn).join('')}</div>` : allPs.length ? `<p class="hand note-l">All the monthly ones are in for ${MONTHS[+thisMonth().slice(5) - 1]}. Nice.</p>` : `<p class="hand note-l">Make one-tap buttons for things you log often, like rent or groceries.</p>`}
+    ${done.length ? `<p class="qdone"><span class="hand">done for ${MONTHS[+thisMonth().slice(5) - 1]}:</span> ${done.map(p => `<button data-act="preset" data-id="${p.id}" aria-label="Add ${esc(p.label)} again">${esc(p.label)}<i>✓</i></button>`).join('')}</p>` : ''}
   </section>`;
   if (!list.length) {
     h += `<div class="card"><div class="empty">${nestArt(true)}<b>The nest is quiet in ${mon}</b><p>Tap + to add what came in or went out, or import a statement.</p><div class="btnrow" style="width:100%"><button class="btn primary" data-act="add">${icon('plus', 'sm')} Add</button><button class="btn" data-act="tab" data-tab="import">${icon('upload', 'sm')} Import</button></div></div></div>`;
@@ -283,6 +286,17 @@ function viewHome() {
 function avgMonthlySpend(m, n = 3, v = S.view) {
   const vals = [1, 2, 3, 4, 5, 6].map(k => totals(monthEntries(addM(m, -k), v)).spent).filter(x => x > 0).slice(0, n);
   return vals.length >= 2 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0; // needs two months to call it "usual"
+}
+/* a quick-add is "monthly" (hides once logged) unless it's a thing you buy many times a month */
+const FREQUENT_CATS = new Set(['groceries', 'food', 'transport', 'shopping', 'fun', 'b_travel']);
+function presetMonthly(p) {
+  if (FREQUENT_CATS.has(p.category_id)) return false;
+  for (let k = 1; k <= 3; k++) if (presetCount(p, addM(thisMonth(), -k)) >= 2) return false;
+  return true;
+}
+function presetCount(p, m) {
+  const note = (p.note || '').trim().toLowerCase();
+  return S.entries.filter(e => (e.date || '').startsWith(m) && (e.preset_id === p.id || (e.kind === p.kind && note && (e.note || '').trim().toLowerCase() === note))).length;
 }
 function presetLogged(p, m = thisMonth()) {
   const note = (p.note || '').trim().toLowerCase();

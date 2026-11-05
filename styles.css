@@ -699,3 +699,7 @@ body::before{content:"";position:fixed;top:0;bottom:0;left:max(18px,calc(50% - 2
 @media (prefers-reduced-motion:reduce){.h-bird{animation:none!important}}
 .panel > *{flex-shrink:0}
 .story{background:none;box-shadow:none;border:0;padding:0}
+.qdone{margin:2px 0 0;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;font-size:13px;color:var(--faint)}
+.qdone .hand{font-size:18px}
+.qdone button{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--in);text-decoration-thickness:2px;font-weight:500}
+.qdone button i{display:inline-block;font-style:normal;color:var(--in);margin-left:4px;font-weight:700}
