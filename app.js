@@ -67,6 +67,7 @@ async function boot() {
   S.db = supabaseDB(S.client);
   const { data } = await S.client.auth.getSession();
   if (!data.session) { S.mode = 'login'; return drawShell(); }
+  if (LOCK.get()) { S.locked = true; drawShell(); setTimeout(() => tryUnlock(true), 350); }
   await afterLogin(data.session);
 }
 async function afterLogin(session) {
@@ -79,6 +80,7 @@ async function afterLogin(session) {
   await loadAll();
   S.db.subscribe(() => { clearTimeout(S._rt); S._rt = setTimeout(refresh, 400); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
+  maybeOfferLock();
 }
 async function loadAll() {
   try {
@@ -105,6 +107,7 @@ function drawShell() { draw(); }
 const reduceMotion = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 function draw() {
   const app = $('#app'), tb = $('#tabbarWrap');
+  if (S.locked) { tb.hidden = true; app.className = 'app'; app.innerHTML = lockView(); return; }
   if (['setup', 'login', 'notmember', 'error', 'boot'].includes(S.mode)) { tb.hidden = true; app.innerHTML = gateView(); return; }
   tb.hidden = false;
   let h = topBar();
@@ -500,6 +503,7 @@ function viewMore() {
     </div></section>
     <section class="card"><div class="card-h"><h2>Data</h2></div><div class="list">
       ${li('export', 'download', 'Export to CSV', 'All entries, for Excel or Google Sheets')}
+      ${S.mode === 'live' ? li('lock', 'lock', `${bioName()} lock`, LOCK.get() ? 'On · no password needed on this phone' : 'Off · turn on to skip the password') : ''}
       ${li('install', 'phone', 'Put Nest on your home screen', 'Install it like an app')}
       ${S.mode === 'live' ? li('signout', 'logout', 'Sign out', esc(S.email)) : window.NEST_PREVIEW ? '' : li('leavedemo', 'logout', 'Leave the example', 'Go to sign in')}
     </div></section>`;
@@ -1103,7 +1107,10 @@ document.addEventListener('click', async e => {
   else if (a === 'impass') { const pw = $('#im-pass')?.value || ''; if (pw) startImport(S.imp.file, pw); }
   else if (a === 'imall') { S.imp.rows.forEach(r => { if (b.dataset.v === '1') { if (r.date) r.on = true; } else r.on = false; }); render(); }
   else if (a === 'imsave') saveImport();
-  else if (a === 'signout') { try { await S.client.auth.signOut(); } catch (err) {} location.reload(); }
+  else if (a === 'signout') { LOCK.set(null); try { await S.client.auth.signOut(); } catch (err) {} location.reload(); }
+  else if (a === 'unlock') tryUnlock(false);
+  else if (a === 'lockpw') { try { await S.client.auth.signOut(); } catch (err) {} location.reload(); }
+  else if (a === 'lock') lockSheet(false);
   else if (a === 'leavedemo') { location.href = location.pathname; }
   else if (a === 'setup') {
     const url = $('#su-url').value.trim().replace(/\/$/, ''), key = $('#su-key').value.trim();
@@ -1124,5 +1131,66 @@ document.addEventListener('input', e => { if (e.target.id === 'q') { S.q = e.tar
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
 function go(tab) { if (!TABS.includes(tab)) tab = 'home'; if (tab !== 'entries' && S.tab === 'entries') { S.catFilter = ''; S.whoFilter = ''; } S.anim = tab !== S.tab; S.tab = tab; if (location.hash.slice(1) !== tab) history.replaceState(null, '', '#' + tab); render(); window.scrollTo(0, 0); }
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (TABS.includes(h) && h !== S.tab) { S.tab = h; render(); } });
+
+/* ---------- Face ID / fingerprint lock ----------
+   You sign in with the password once; Supabase keeps the session on this phone.
+   The lock asks the phone's own Face ID / fingerprint (WebAuthn, platform authenticator)
+   before showing anything, and again after Nest has been in the background a few minutes. */
+const LOCK = { get: () => ls.get('lock', null), set: v => ls.set('lock', v) };
+const RELOCK_MS = 3 * 60 * 1000;
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0));
+const rnd = n => crypto.getRandomValues(new Uint8Array(n));
+const bioName = () => /iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'Face ID' : 'fingerprint';
+async function bioAvailable() { try { return !!(window.PublicKeyCredential && window.isSecureContext && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch (e) { return false; } }
+async function bioEnable() {
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: rnd(32), rp: { name: 'Nest' },
+    user: { id: rnd(16), name: S.email, displayName: whoName(S.person) + ' · Nest' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+    authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+    timeout: 60000, attestation: 'none' } });
+  LOCK.set({ id: b64u(cred.rawId), email: S.email });
+}
+async function bioCheck() {
+  const L = LOCK.get(); if (!L) return;
+  await navigator.credentials.get({ publicKey: { challenge: rnd(32), allowCredentials: [{ type: 'public-key', id: unb64u(L.id), transports: ['internal'] }], userVerification: 'required', timeout: 60000 } });
+}
+let unlocking = false;
+async function tryUnlock(auto) {
+  if (unlocking || !S.locked) return; unlocking = true;
+  try { await bioCheck(); S.locked = false; S.anim = true; draw(); }
+  catch (e) { if (!auto) toast(`Couldn't confirm it's you. Try again, or use your password.`); }
+  unlocking = false;
+}
+function lockView() {
+  return `<div class="login lockscr">${nestArt()}<h1>Welcome home</h1><p>Nest is locked on this phone.</p>
+    <button class="btn primary block" data-act="unlock">${icon('lock', 'sm')} Unlock with ${bioName()}</button>
+    <button class="link" data-act="lockpw" style="align-self:center">Use password instead</button></div>`;
+}
+async function maybeOfferLock() {
+  if (S.mode !== 'live' || LOCK.get() || ls.get('lockAsked', false) || !(await bioAvailable())) return;
+  ls.set('lockAsked', true);
+  setTimeout(() => lockSheet(true), 900);
+}
+function lockSheet(offer) {
+  const on = !!LOCK.get(), n = bioName();
+  openSheet(`${shHead(`${n} lock`)}
+    <p class="hand note-l" style="margin:0">${offer ? `Skip the password from now on.` : on ? `On. Nest asks for ${n} when you open it.` : 'Off.'}</p>
+    <p class="small muted" style="margin:0">You stay signed in on this phone. When you open Nest, or come back after a few minutes away, it asks for ${n} before showing anything. ${n === 'Face ID' ? 'Face ID' : 'Your fingerprint'} never leaves the phone. Set it up on each phone separately.</p>
+    <button class="btn primary block" id="lk-go">${on ? `Turn off ${n} lock` : `${icon('lock', 'sm')} Turn on ${n}`}</button>
+    ${offer ? `<button class="btn block" data-close>Not now</button>` : ''}`, p => {
+    $('#lk-go', p).onclick = async () => {
+      if (on) { LOCK.set(null); toast(`${n} lock off`); closeSheet(); render(); return; }
+      if (!(await bioAvailable())) { toast(`This phone or browser can't use ${n} here.`); return; }
+      try { await bioEnable(); toast(`${n} lock on`); closeSheet(); render(); }
+      catch (e) { toast(`${n} wasn't set up. Try again.`); }
+    };
+  });
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { S.hiddenAt = Date.now(); return; }
+  if (LOCK.get() && S.mode === 'live' && !S.locked && S.hiddenAt && Date.now() - S.hiddenAt > RELOCK_MS) { S.locked = true; closeSheet(); draw(); setTimeout(() => tryUnlock(true), 300); }
+});
 
 boot();
