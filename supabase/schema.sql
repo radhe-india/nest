@@ -91,6 +91,14 @@ create table if not exists public.presets (
   sort        int not null default 0
 );
 
+-- how often an autopay repeats (month, quarter, half, year) and, if not monthly, which month it falls in
+alter table public.presets add column if not exists every text not null default 'month';
+alter table public.presets drop constraint if exists presets_every_check;
+alter table public.presets add constraint presets_every_check check (every in ('month','quarter','half','year'));
+alter table public.presets add column if not exists due_month int;
+alter table public.presets drop constraint if exists presets_due_month_check;
+alter table public.presets add constraint presets_due_month_check check (due_month between 1 and 12);
+
 alter table public.entries drop constraint if exists entries_preset_id_fkey;
 alter table public.entries add constraint entries_preset_id_fkey foreign key (preset_id) references public.presets(id) on delete set null;
 
