@@ -89,11 +89,12 @@ async function loadAll() {
     const st = Object.fromEntries(settings.map(s => [s.key, s.value]));
     S.people = { me: 'Me', trisha: 'Trisha', ...(st.people || {}) };
     S.skipWords = st.skip_words || [];
+    S.usualHidden = st.usual_hidden || null;
     if (S.mode !== 'demo') S.mode = 'live';
     if (!VIEWS().some(v => v[0] === S.view)) S.view = 'home';
   } catch (e) { S.mode = 'error'; S.error = 'Could not load your data. ' + (e.message || ''); }
   drawShell();
-  if (S.mode === 'live' || S.mode === 'demo') runAutopay();
+  if (S.mode === 'live' || S.mode === 'demo') { runAutopay(); learnUsual(); }
 }
 async function refresh() {
   if (S.mode !== 'live') return;
@@ -521,7 +522,7 @@ function viewMore() {
     </div></section>
     <section class="card"><div class="card-h"><h2>Logging</h2></div><div class="list">
       ${li('autopay', 'refund', 'Autopay & SIPs', `${autoItems().filter(p => !p.paused && +p.amount > 0).length} added automatically each month`)}
-      ${li('presets', 'star', 'Quick-add buttons', `${S.presets.filter(p => !p.auto).length} on Home`)}
+      ${li('presets', 'star', 'Usual ones & quick-adds', `${S.presets.filter(p => !p.auto).length} on Home and in Add`)}
       ${li('tab-import', 'upload', 'Import a statement', 'Screenshots, PDFs, CSV or Excel')}
       ${li('cats', 'tag', 'Categories', `${S.cats.filter(c => !c.archived).length} categories`)}
       ${li('rules', 'rule', 'Import rules', `${S.rules.length} words that pick a category`)}
@@ -568,20 +569,55 @@ function historyGroups(kind, scope) {
     const who = Object.entries(g.whos).sort((x, y) => y[1] - x[1])[0][0];
     return { category_id: g.category_id, note: g.note, count: a.length, amount: fixed ? med : Math.round(med / 10) * 10, fixed, last: g.last, who }; });
 }
+/* "your usual ones" are the quick-add buttons, most used first */
 function suggestions(kind, scope) {
-  return historyGroups(kind, scope).filter(g => g.note).sort((a, b) => b.count - a.count || b.last.localeCompare(a.last)).slice(0, 10);
+  const cut = addM(thisMonth(), -6), used = p => { let n = 0; for (let m = cut; m <= thisMonth(); m = addM(m, 1)) n += presetCount(p, m); return n; };
+  return S.presets.filter(p => !p.auto && p.kind === kind && (p.scope || 'home') === scope).map(p => [p, used(p)]).sort((a, b) => b[1] - a[1] || (a[0].sort || 0) - (b[0].sort || 0)).map(x => x[0]).slice(0, 12);
+}
+/* learn new usual ones: anything logged 3+ times in 6 months under the same name becomes a quick-add, unless you removed it */
+const usualKey = (kind, scope, note) => `${kind}|${scope || 'home'}|${(note || '').trim().toLowerCase()}`;
+async function learnUsual() {
+  if (!S.db || S._learning || S.mode === 'error') return;
+  S._learning = true;
+  try {
+    const autoIds = new Set(S.presets.filter(p => p.auto).map(p => p.id));
+    if (!S.usualHidden) { // first run: hide what was never a usual one
+      const hide = [];
+      for (const sc of ['home', 'business']) for (const k of Object.keys(KIND)) for (const g of historyGroups(k, sc)) if (/sanjay/i.test(g.note)) hide.push(usualKey(k, sc, g.note));
+      S.usualHidden = hide;
+      await S.db.upsert('settings', { key: 'usual_hidden', value: hide }, 'key');
+    }
+    const have = new Set(S.presets.flatMap(p => [usualKey(p.kind, p.scope, p.note), usualKey(p.kind, p.scope, p.label)]));
+    const hidden = new Set(S.usualHidden);
+    const add = [];
+    for (const sc of ['home', 'business']) for (const k of Object.keys(KIND)) for (const g of historyGroups(k, sc)) {
+      const key = usualKey(k, sc, g.note);
+      if (!g.note || g.count < 3 || have.has(key) || hidden.has(key)) continue;
+      if (S.entries.some(e => e.source === 'auto' && autoIds.has(e.preset_id) && (e.note || '').trim().toLowerCase() === g.note.toLowerCase())) continue;
+      have.add(key);
+      add.push({ label: g.note, kind: k, amount: g.fixed ? g.amount : null, category_id: g.category_id, goal_id: null, note: g.note, who: 'joint', scope: sc, sort: S.presets.length + add.length + 1, auto: false });
+    }
+    for (const row of add) { const r = await S.db.insert('presets', row); S.presets.push(r); }
+    if (add.length) render();
+  } catch (e) { console.error(e); }
+  S._learning = false;
+}
+async function hideUsual(p) {
+  const keys = [usualKey(p.kind, p.scope, p.note), usualKey(p.kind, p.scope, p.label)];
+  const v = [...new Set([...(S.usualHidden || []), ...keys])];
+  if (await save(() => S.db.upsert('settings', { key: 'usual_hidden', value: v }, 'key'))) S.usualHidden = v;
 }
 const catChip = (c, on) => `<button type="button" class="cp" data-c="${c.id}" aria-pressed="${on}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span>${esc(c.name)}</span></button>`;
 function entrySheet(id, preset, presetDate) {
   const ex = id ? S.entries.find(e => e.id === id) : null;
-  const defWho = S.person;
+  const defWho = 'joint';
   const F = ex ? { ...ex } : { kind: 'spent', amount: '', category_id: '', goal_id: null, note: '', who: defWho, scope: scopeOfView(), paid_with: '', date: today() };
   if (preset) Object.assign(F, { kind: preset.kind, amount: preset.amount || '', category_id: preset.category_id || '', goal_id: preset.goal_id || null, note: preset.note || '', who: preset.who || F.who, scope: preset.scope || 'home', preset_id: preset.id && S.presets.some(x => x.id === preset.id) ? preset.id : null });
   if (presetDate) F.date = presetDate;
   openSheet(`${shHead(ex ? 'Edit entry' : preset ? esc(preset.label) : 'Add an entry')}
     ${ex && ex.source === 'auto' ? `<div class="statusbar">Added automatically by Autopay. Change anything here; deleting skips this month.</div>` : ''}
     <div class="seg kindseg" id="f-kind"></div>
-    <div class="amount"><span>₹</span><input id="f-amt" inputmode="decimal" placeholder="0" value="${esc(F.amount)}" aria-label="Amount" autocomplete="off"></div>
+    <div class="amount"><span>₹</span><input id="f-amt" inputmode="decimal" enterkeyhint="done" placeholder="0" value="${esc(F.amount)}" ${!ex && !F.amount ? 'autofocus' : ''} aria-label="Amount" autocomplete="off"></div>
     <div class="amt-und">${under('ink')}</div>
     <div class="field" id="f-suggw"></div>
     <div class="field"><span class="flabel">Category</span><div class="catpick" id="f-cats"></div></div>
@@ -607,19 +643,20 @@ function entrySheet(id, preset, presetDate) {
       // suggestions from what you usually log
       const sg = ex ? [] : suggestions(F.kind, F.scope);
       const curNote = ($('#f-note', p)?.value ?? F.note).trim().toLowerCase();
-      $('#f-suggw', p).innerHTML = sg.length ? `<span class="flabel">Your usual ones</span><div class="sugg">${sg.map((x, i) => { const c = catOf(x.category_id), on = F.category_id === x.category_id && curNote === x.note.toLowerCase();
-        return `<button type="button" class="sg" data-sg="${i}" aria-pressed="${on}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span style="min-width:0"><b>${esc(x.note || c.name)}</b><small>${esc(c.name)}</small></span></button>`; }).join('')}</div>` : '';
+      $('#f-suggw', p).innerHTML = sg.length ? `<div class="card-h" style="margin:0"><span class="flabel">Your usual ones</span><button type="button" class="link" data-usualedit>edit</button></div><div class="sugg">${sg.map((x, i) => { const c = catOf(x.category_id), on = F.category_id === x.category_id && curNote === (x.note || x.label).toLowerCase();
+        return `<button type="button" class="sg" data-sg="${i}" aria-pressed="${on}" style="${tints(c.color)}">${icon(c.icon, 'sm')}<span style="min-width:0"><b>${esc(x.label || x.note || c.name)}</b><small>${esc(c.name)}${x.amount ? ' · ' + fmtK(x.amount) : ''}</small></span></button>`; }).join('')}</div>` : '';
       p._sugg = sg;
     };
     drawS();
     p.addEventListener('click', e => {
       const b = e.target.closest('button'); if (!b) return;
+      if ('usualedit' in b.dataset) { presetsSheet(); return; }
       if (b.dataset.k) { F.kind = b.dataset.k; if (F.kind !== 'saved') F.goal_id = null; drawS(); }
       else if (b.dataset.c) { F.category_id = b.dataset.c; drawS(); }
       else if (b.dataset.g) { F.goal_id = F.goal_id === b.dataset.g ? null : b.dataset.g; if (F.goal_id && !F.category_id) F.category_id = 'goal'; drawS(); }
       else if (b.dataset.d) { F.date = b.dataset.d; $('#f-date', p).value = F.date; drawS(); }
       else if (b.dataset.w) { F.who = b.dataset.w; drawS(); }
-      else if (b.dataset.sg != null) { const x = p._sugg[+b.dataset.sg]; F.category_id = x.category_id; F.note = x.note; $('#f-note', p).value = x.note; if (x.who) F.who = x.who; drawS(); if (!num($('#f-amt', p).value)) $('#f-amt', p).focus(); }
+      else if (b.dataset.sg != null) { const x = p._sugg[+b.dataset.sg], nt = x.note || x.label; F.category_id = x.category_id; F.goal_id = x.goal_id || null; F.note = nt; F.preset_id = x.id; $('#f-note', p).value = nt; if (x.who) F.who = x.who; if (x.amount && !num($('#f-amt', p).value)) { $('#f-amt', p).value = x.amount; fit(); } drawS(); if (!num($('#f-amt', p).value)) $('#f-amt', p).focus(); }
     });
     const fit = () => { const el = $('#f-amt', p); el.style.width = Math.max(1, (el.value || el.placeholder).length) + 0.6 + 'ch'; };
     fit(); $('#f-amt', p).addEventListener('input', fit);
@@ -639,7 +676,7 @@ function entrySheet(id, preset, presetDate) {
       if (ex) S.entries = S.entries.map(x => x.id === ex.id ? r : x); else S.entries.push(r);
       toast(`${ex ? 'Saved' : 'Added'} ${fmt(amount)} ${F.kind === 'in' ? 'in' : F.kind === 'saved' ? 'saved' : 'spent'}`);
       if (!ex && !S.month.startsWith(row.date.slice(0, 7)) && row.date.slice(0, 7) <= thisMonth()) S.month = row.date.slice(0, 7);
-      render();
+      render(); if (!ex) learnUsual();
       if (again) { $('#f-amt', p).value = ''; fit(); $('#f-note', p).value = ''; F.note = ''; F.preset_id = null; drawS(); $('#f-amt', p).focus(); } else closeSheet();
     };
     $('#f-save', p).onclick = () => doSave(false);
@@ -653,7 +690,7 @@ function entrySheet(id, preset, presetDate) {
         if (ap) { const m = ex.date.slice(0, 7), skip = [...new Set([...(ap.skip_months || []), m])]; const r = await save(() => S.db.update('presets', ap.id, { skip_months: skip })); if (r) S.presets = S.presets.map(x => x.id === ap.id ? r : x); }
         closeSheet(); render(); };
       $('#f-preset', p).onclick = () => presetEdit(null, { label: ex.note || catOf(ex.category_id).name, kind: ex.kind, amount: ex.amount, category_id: ex.category_id, goal_id: ex.goal_id, note: ex.note, who: ex.who, scope: ex.scope });
-    } else if (!F.amount) setTimeout(() => $('#f-amt', p)?.focus(), 280);
+    } else if (!F.amount) { const a = $('#f-amt', p); try { a.focus({ preventScroll: true }); } catch (e) { a.focus(); } setTimeout(() => { if (document.activeElement !== a) a.focus({ preventScroll: true }); }, 300); }
   });
 }
 
@@ -719,6 +756,7 @@ function autopayEdit(id) {
       $('#ap-who', p).innerHTML = ['me', 'trisha', 'joint'].map(k => `<button type="button" data-w="${k}" aria-pressed="${F.who === k}">${esc(whoName(k))}</button>`).join('');
     };
     d();
+    p.addEventListener('change', e => { if (e.target.id === 'ap-m') F.due_month = +e.target.value; });
     p.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.k) { F.kind = b.dataset.k; F.category_id = F.kind === 'saved' ? 'sip' : F.kind === 'in' ? 'salary' : 'bills'; d(); }
       else if (b.dataset.ev) { F.due_month = +($('#ap-m', p)?.value || F.due_month); F.every = b.dataset.ev; d(); }
@@ -742,7 +780,7 @@ function autopayEdit(id) {
 
 /* presets */
 function presetsSheet() {
-  openSheet(`${shHead('Quick-add buttons')}<p class="small muted" style="margin:0">These sit on Home. Tap one to log it in a second. Leave the amount empty for things that change each time. Autopays and SIPs live under More → Autopay & SIPs.</p>
+  openSheet(`${shHead('Usual ones & quick-adds')}<p class="small muted" style="margin:0">These sit on Home and under “Your usual ones” when you add something. Anything you log three times under the same name gets added here on its own; remove one and it stays gone. Leave the amount empty for things that change each time. Autopays and SIPs live under More → Autopay & SIPs.</p>
     <div class="rows">${S.presets.filter(pr => !pr.auto).map(pr => { const c = catOf(pr.category_id); return `<button class="row" data-pe="${pr.id}"><span class="bub" style="--c:${c.color}">${icon(c.icon)}</span><div class="r-main"><div class="r-name">${esc(pr.label)}</div><div class="r-sub">${esc(c.name)} · ${esc(whoName(pr.who))}${pr.scope === 'business' ? ' · Business' : ''}</div></div><div class="r-amt num">${pr.amount ? fmt(pr.amount) : ''}</div></button>`; }).join('') || '<p class="small muted">No buttons yet.</p>'}</div>
     <button class="btn primary block" data-pe="">${icon('plus', 'sm')} New button</button>`, p => {
     p.onclick = e => { const b = e.target.closest('[data-pe]'); if (b) presetEdit(b.dataset.pe || null); };
@@ -780,7 +818,7 @@ function presetEdit(id, from) {
       S.presets = ex ? S.presets.map(x => x.id === ex.id ? r : x) : [...S.presets, r];
       render(); presetsSheet();
     };
-    if (ex) { let armed = false; $('#pe-del', p).onclick = async e => { if (!armed) { armed = true; e.currentTarget.textContent = 'Tap again to remove'; return; } if (await save(() => S.db.remove('presets', ex.id), 'Button removed')) { S.presets = S.presets.filter(x => x.id !== ex.id); render(); presetsSheet(); } }; }
+    if (ex) { let armed = false; $('#pe-del', p).onclick = async e => { if (!armed) { armed = true; e.currentTarget.textContent = 'Tap again to remove'; return; } if (await save(() => S.db.remove('presets', ex.id), 'Button removed')) { S.presets = S.presets.filter(x => x.id !== ex.id); await hideUsual(ex); render(); presetsSheet(); } }; }
   });
 }
 
