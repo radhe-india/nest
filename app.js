@@ -17,6 +17,7 @@ const addM = (m, k) => { let [y, mo] = m.split('-').map(Number); mo += k; while 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const mLabel = m => { const [y, mo] = m.split('-').map(Number); return `${MONTHS[mo - 1]} ${y}`; };
 const mShort = m => { const [, mo] = m.split('-').map(Number); return MONTHS[mo - 1].slice(0, 3); };
+const dateLong = d => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(d.slice(0, 4) !== today().slice(0, 4) ? { year: 'numeric' } : {}) });
 const dayLabel = d => { if (d === today()) return 'Today'; if (d === yesterday()) return 'Yesterday'; return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }); };
 const num = v => { const n = parseFloat(String(v ?? '').replace(/[,₹\s]/g, '')); return isNaN(n) ? 0 : n; };
 const ls = { get(k, d) { try { const v = localStorage.getItem('nest.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem('nest.' + k, JSON.stringify(v)); } catch (e) {} } };
@@ -764,7 +765,7 @@ function entrySheet(id, preset, presetDate) {
 
 /* ---------- autopay & SIPs: added automatically on their day ---------- */
 const autoItems = () => S.presets.filter(p => p.auto).sort((a, b) => (a.due_day || 1) - (b.due_day || 1));
-function nextDue(p) { const t = today(); let m = thisMonth(); for (let k = 0; k < 14; k++, m = addM(m, 1)) { if (!isDue(p, m) || (p.skip_months || []).includes(m)) continue; const e = presetLogged(p, m), d = e ? e.date : dueDate(p, m); if (d >= t) return d; } return null; }
+function nextDue(p) { const t = today(); let m = thisMonth() > startMonth(p) ? thisMonth() : startMonth(p); for (let k = 0; k < 14; k++, m = addM(m, 1)) { if (!isDue(p, m) || (p.skip_months || []).includes(m)) continue; const e = presetLogged(p, m), d = e ? e.date : dueDate(p, m); if (d >= t) return d; } return null; }
 const autoRow = (p, m) => ({ date: dueDate(p, m), kind: p.kind, amount: +p.amount, category_id: p.category_id, goal_id: p.kind === 'saved' ? p.goal_id || null : null, note: p.note || p.label, who: p.who || 'joint', scope: p.scope || 'home', source: 'auto', preset_id: p.id, import_key: `auto:${p.id}:${m}` });
 const startMonth = p => (p.starts_on || today()).slice(0, 7);
 async function runAutopay() {
@@ -772,6 +773,10 @@ async function runAutopay() {
   S._autoRunning = true;
   S.autoErr = S.autoErr || {};
   try {
+    // an autopay's entry in a month it isn't due (this month or later) is a mistake: clear it
+    const ids = new Map(autoItems().map(p => [p.id, p]));
+    for (const e of S.entries.filter(e => e.source === 'auto' && ids.has(e.preset_id) && e.date && e.date.slice(0, 7) >= thisMonth() && !isDue(ids.get(e.preset_id), e.date.slice(0, 7))))
+      try { await S.db.remove('entries', e.id); S.entries = S.entries.filter(x => x.id !== e.id); } catch (er) { console.error(er); }
     const rows = [];
     for (const p of autoItems()) {
       if (p.paused || !(+p.amount > 0) || !p.category_id) continue;
@@ -821,14 +826,29 @@ async function addAutoNow(p, m = thisMonth()) {
   if (S.autoErr) delete S.autoErr[p.id];
   S.entries.push(r); render(); return true;
 }
+/* after an autopay changes, fix the entries it already put in this month or later */
+async function reconcileAuto(p) {
+  const t = today(), list = S.entries.filter(e => e.source === 'auto' && e.preset_id === p.id && e.date && e.date.slice(0, 7) >= thisMonth());
+  let changed = 0;
+  for (const e of list) {
+    const m = e.date.slice(0, 7), later = e.date > t;
+    const drop = !isDue(p, m) || (later && (p.paused || !(+p.amount > 0) || m < startMonth(p)));
+    if (drop) { if (await save(() => S.db.remove('entries', e.id))) { S.entries = S.entries.filter(x => x.id !== e.id); changed++; } continue; }
+    if (m < startMonth(p) || !(+p.amount > 0)) continue;
+    const want = autoRow(p, m); delete want.import_key; delete want.source; delete want.preset_id;
+    const patch = Object.fromEntries(Object.entries(want).filter(([k, v]) => String(e[k] ?? '') !== String(v ?? '')));
+    if (Object.keys(patch).length) { const r = await save(() => S.db.update('entries', e.id, patch)); if (r) { S.entries = S.entries.map(x => x.id === e.id ? r : x); changed++; } }
+  }
+  return changed;
+}
 function autopaySheet() {
   const items = autoItems();
   const live = items.filter(p => !p.paused && +p.amount > 0 && p.kind === 'spent'), pm = live.reduce((a, p) => a + perMonth(p), 0);
-  openSheet(`${shHead('Autopay & SIPs')}<p class="small muted" style="margin:0">Subscriptions, bills and SIPs that go out on their own, monthly or yearly. Nest puts each one into Entries on its date, so you never log them. Edit them there like anything else; delete one and that time is skipped.</p>
+  openSheet(`${shHead('Autopay & SIPs')}<p class="small muted" style="margin:0">Subscriptions, bills and SIPs that go out on their own. Each one lands in Entries in the month it's due (from the 1st, so it shows under Coming up), and only in the months it's due. Delete one in Entries and that time is skipped.</p>
     ${pm ? `<p class="hand note-l" style="margin:0">About ${fmt(pm)} a month goes out on its own${live.some(p => everyOf(p) !== 'month') ? ', counting yearly ones spread over the year' : ''}.</p>` : ''}
     <div class="rows">${items.map(p => { const c = catOf(p.category_id), nd = nextDue(p);
       const st = autoStatus(p), warn = st.s === 'miss' || st.s === 'err';
-      const status = st.s === 'off' ? st.t : `${everyText(p)}${st.t ? ' · ' + st.t : nd ? ' · next ' + dayLabel(nd).replace(/^[A-Z][a-z]{2}, /, '') : ''}`;
+      const status = st.s === 'off' ? st.t : `${everyText(p)}${st.t ? ' · ' + st.t : nd ? ' · next ' + dateLong(nd) : ''}`;
       return `<button class="row" data-ap="${p.id}"><span class="bub" style="--c:${c.color}">${icon(c.icon)}</span><div class="r-main"><div class="r-name">${esc(p.label)}</div><div class="r-sub${warn ? ' ap-warn' : ''}">${esc(status)}${p.who === 'trisha' ? ' · ' + esc(S.people.trisha) : ''}</div></div><div class="r-amt num ${p.kind}">${+p.amount > 0 ? fmt(p.amount) : '–'}</div></button>`; }).join('') || '<p class="small muted">Nothing set up yet.</p>'}</div>
     <button class="btn primary block" data-ap="">${icon('plus', 'sm')} Add an autopay or SIP</button>`, p => {
     p.onclick = e => { const b = e.target.closest('[data-ap]'); if (b) autopayEdit(b.dataset.ap || null); };
@@ -838,19 +858,20 @@ function autopayEdit(id) {
   const ex = id ? S.presets.find(x => x.id === id) : null;
   const F = ex ? { ...ex } : { label: '', kind: 'spent', amount: null, category_id: 'bills', goal_id: null, note: '', who: S.person, scope: 'home', due_day: new Date().getDate(), paid_with: '', paused: false, auto: true, sort: 100 + S.presets.length, skip_months: [] };
   F.every = everyOf(F); F.due_month = anchorMonth(F);
+  F.next = ex ? (nextDue(ex) || (() => { let m = thisMonth() > startMonth(ex) ? thisMonth() : startMonth(ex); for (let k = 0; k < 13 && !isDue(ex, m); k++) m = addM(m, 1); return dueDate(ex, m); })()) : today();
   openSheet(`${shHead(ex ? 'Edit autopay' : 'New autopay or SIP')}
     <div class="field"><label for="ap-l">Name</label><input class="inp" id="ap-l" value="${esc(F.label)}" placeholder="e.g. Netflix, SIP – Axis Bluechip"></div>
     <div class="seg kindseg" id="ap-kind"></div>
     <div class="grid2"><div class="field"><label for="ap-a">Amount (₹)</label><input class="inp" id="ap-a" inputmode="decimal" value="${F.amount || ''}" placeholder="0"></div>
-      <div class="field"><label for="ap-d">Day of the month</label><input class="inp" id="ap-d" inputmode="numeric" value="${F.due_day || ''}" placeholder="1"></div></div>
+      <div class="field"><label for="ap-date" id="ap-datel">Next payment on</label><input class="inp" type="date" id="ap-date" value="${esc(F.next)}"></div></div>
     <div class="field"><span class="flabel">How often</span><div class="seg" id="ap-every"></div></div>
-    <div class="field" id="ap-monw"></div>
+    <p class="small muted" id="ap-sched" style="margin:-4px 0 0"></p>
     <div class="field"><span class="flabel">Category</span><div class="catpick" id="ap-cats"></div></div>
     <div class="field" id="ap-goalw"></div>
     <div class="field"><span class="flabel">Whose</span><div class="seg" id="ap-who"></div></div>
     ${ex ? `<label class="check"><input type="checkbox" id="ap-pause" ${F.paused ? 'checked' : ''}> Paused (stop adding it for now)</label>` : ''}
     ${ex ? (st => st.s === 'none' || st.s === 'off' ? '' : `<div class="statusbar${st.s === 'ok' ? '' : ' warn'}" id="ap-month"><b>This month.</b> ${esc(st.t)}${st.s === 'err' ? `<br><span class="small">${esc(S.autoErr[ex.id])}</span>` : ''}${st.s === 'ok' ? '' : `<br><button type="button" class="btn sm" id="ap-now" style="margin-top:6px">Add it for ${MONTHS[+thisMonth().slice(5) - 1]} (${esc(dayLabel(dueDate(ex)))})</button>`}</div>`)(autoStatus(ex)) : ''}
-    <p class="small muted" style="margin:0">${ex ? 'Changes apply from the next time it is due. To fix an entry already added, edit the entry itself.' : 'It goes into Entries on its date, from this month on, including a date earlier this month.'}</p>
+    <p class="small muted" style="margin:0">${ex ? "Saving also fixes this month's entry if the date, amount or schedule changed. Earlier months stay as they are." : 'If the date is earlier this month, it goes into this month straight away.'}</p>
     <button class="btn primary block" id="ap-save">${ex ? 'Save' : 'Add autopay'}</button>
     ${ex ? `<button class="btn danger block" id="ap-del">Remove autopay</button>` : ''}<button class="btn block" id="ap-back">Back</button>`, p => {
     const d = () => {
@@ -859,30 +880,47 @@ function autopayEdit(id) {
       const gs = S.goals.filter(g => !g.archived);
       $('#ap-goalw', p).innerHTML = F.kind === 'saved' && F.category_id === 'goal' && gs.length ? `<span class="flabel">Which goal</span><div class="chips wrap">${gs.map(g => `<button type="button" class="chip" data-g="${g.id}" aria-pressed="${F.goal_id === g.id}">${esc(g.name)}</button>`).join('')}</div>` : '';
       $('#ap-every', p).innerHTML = Object.entries(EVERY).map(([k, [, l]]) => `<button type="button" data-ev="${k}" aria-pressed="${F.every === k}">${l.replace('Every ', '')}</button>`).join('');
-      $('#ap-monw', p).innerHTML = F.every === 'month' ? '' : `<label for="ap-m">${F.every === 'year' ? 'Which month' : 'First month it comes due'}</label><select class="inp" id="ap-m">${MONTHS.map((n, i) => `<option value="${i + 1}" ${F.due_month === i + 1 ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+      sched();
       $('#ap-who', p).innerHTML = ['me', 'trisha', 'joint'].map(k => `<button type="button" data-w="${k}" aria-pressed="${F.who === k}">${esc(whoName(k))}</button>`).join('');
     };
+    // plain words for the schedule the date + "how often" add up to
+    function sched() {
+      const v = $('#ap-date', p).value; if (!v) { $('#ap-sched', p).textContent = 'Pick the date of the next payment.'; return; }
+      const day = +v.slice(8), step = EVERY[F.every][0], ms = [...Array(12 / step)].map((_, i) => MONTHS[(+v.slice(5, 7) - 1 + i * step) % 12].slice(0, 3));
+      $('#ap-sched', p).textContent = F.every === 'month' ? `Day ${day} of every month, starting ${dateLong(v)}.` : F.every === 'year' ? `Every ${day} ${MONTHS[+v.slice(5, 7) - 1]}, starting ${dateLong(v)}. Nothing is added in other months.` : `Day ${day} of ${ms.join(', ')}, starting ${dateLong(v)}. Nothing is added in other months.`;
+    }
     d();
-    p.addEventListener('change', e => { if (e.target.id === 'ap-m') F.due_month = +e.target.value; });
+    p.addEventListener('change', e => { if (e.target.id === 'ap-date') { F.next = e.target.value; sched(); } });
     p.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.k) { F.kind = b.dataset.k; F.category_id = F.kind === 'saved' ? 'sip' : F.kind === 'in' ? 'salary' : 'bills'; d(); }
-      else if (b.dataset.ev) { F.due_month = +($('#ap-m', p)?.value || F.due_month); F.every = b.dataset.ev; d(); }
+      else if (b.dataset.ev) { F.every = b.dataset.ev; d(); }
       else if (b.dataset.c) { F.category_id = b.dataset.c; d(); } else if (b.dataset.g) { F.goal_id = b.dataset.g; d(); } else if (b.dataset.w) { F.who = b.dataset.w; d(); } });
     $('#ap-back', p).onclick = autopaySheet;
     $('#ap-now', p) && ($('#ap-now', p).onclick = async e => { e.currentTarget.disabled = true; if (await addAutoNow(ex)) autopaySheet(); else e.currentTarget.disabled = false; });
     $('#ap-save', p).onclick = async () => {
       const label = $('#ap-l', p).value.trim(); if (!label) { toast('Give it a name.'); return; }
-      const amount = num($('#ap-a', p).value), day = Math.round(num($('#ap-d', p).value));
-      if (!(day >= 1 && day <= 31)) { toast('Day must be between 1 and 31.'); return; }
+      const amount = num($('#ap-a', p).value), next = $('#ap-date', p).value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) { toast('Pick the date of the next payment.'); return; }
+      const day = +next.slice(8), nm = next.slice(0, 7);
       if (!F.category_id) { toast('Pick a category.'); return; }
       const row = { label, note: label, kind: F.kind, amount: amount > 0 ? amount : null, category_id: F.category_id, goal_id: F.kind === 'saved' ? F.goal_id || null : null, who: F.who, scope: F.scope, due_day: day, auto: true, paused: $('#ap-pause', p) ? $('#ap-pause', p).checked : false, sort: F.sort };
-      if (!ex) row.starts_on = today().slice(0, 8) + '01';
-      if (F.every !== 'month' || (ex && 'every' in ex)) { row.every = F.every; row.due_month = F.every === 'month' ? null : +($('#ap-m', p)?.value || F.due_month); }
+      // nothing is added before the month of the next payment (or this month, if that date is already past)
+      let startM = nm > thisMonth() ? nm : thisMonth();
+      if (ex) { // only move the start later if the date chosen is later than when it would next fall anyway
+        const keep = (startMonth(ex) < thisMonth() ? startMonth(ex) : thisMonth()) + '-01';
+        const natural = nextDue({ ...ex, ...row, every: F.every, due_month: F.every === 'month' ? null : +next.slice(5, 7), starts_on: keep, skip_months: [] });
+        startM = natural && next > natural ? nm : keep.slice(0, 7);
+      }
+      row.starts_on = startM + '-01';
+      if (F.every !== 'month' || (ex && 'every' in ex)) { row.every = F.every; row.due_month = F.every === 'month' ? null : +next.slice(5, 7); }
       const r = await save(() => ex ? S.db.update('presets', ex.id, row) : S.db.insert('presets', { ...row, skip_months: [] }), ex ? 'Saved' : 'Autopay added');
       if (!r) return; S.presets = ex ? S.presets.map(x => x.id === ex.id ? r : x) : [...S.presets, r];
-      await runAutopay(); autopaySheet();
+      if (ex) { const n = await reconcileAuto(r); if (n) toast(`Saved. Fixed ${n} entr${n === 1 ? 'y' : 'ies'} it had added.`); }
+      await runAutopay(); render(); autopaySheet();
     };
-    if (ex) { let armed = false; $('#ap-del', p).onclick = async e => { if (!armed) { armed = true; e.currentTarget.textContent = 'Tap again to remove (past entries stay)'; return; } if (await save(() => S.db.remove('presets', ex.id), 'Autopay removed')) { S.presets = S.presets.filter(x => x.id !== ex.id); autopaySheet(); } }; }
+    if (ex) { let armed = false; $('#ap-del', p).onclick = async e => { if (!armed) { armed = true; e.currentTarget.textContent = 'Tap again to remove (past entries stay)'; return; }
+      for (const en of S.entries.filter(x => x.source === 'auto' && x.preset_id === ex.id && x.date > today())) if (await save(() => S.db.remove('entries', en.id))) S.entries = S.entries.filter(x => x.id !== en.id);
+      if (await save(() => S.db.remove('presets', ex.id), 'Autopay removed')) { S.presets = S.presets.filter(x => x.id !== ex.id); render(); autopaySheet(); } }; }
   });
 }
 
