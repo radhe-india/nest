@@ -715,3 +715,4 @@ body::before{content:"";position:fixed;top:0;bottom:0;left:max(18px,calc(50% - 2
 .dupe-e.drop .r-name{text-decoration:line-through;text-decoration-color:var(--out)}
 .btn.sm{padding:6px 12px;font-size:12.5px;min-height:0}
 .dupe .link{align-self:flex-start;padding-top:4px}
+.ap-warn{color:var(--warn);font-weight:600}
