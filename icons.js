@@ -31,7 +31,7 @@ lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0
 key:'<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l2 2M15 8l2 2"/>',
 coffee:'<path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 3v3M12 3v3"/>',
 shirt:'<path d="M8 3l4 2 4-2 5 4-3 3-2-1v12H8V9l-2 1-3-3z"/>',
-plus:'<path d="M12 5v14M5 12h14"/>', chevl:'<path d="M15 5l-7 7 7 7"/>', chevr:'<path d="M9 5l7 7-7 7"/>',
+plus:'<path d="M12 5v14M5 12h14"/>', copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>', chevl:'<path d="M15 5l-7 7 7 7"/>', chevr:'<path d="M9 5l7 7-7 7"/>',
 search:'<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>', x:'<path d="M6 6l12 12M18 6 6 18"/>',
 gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>',
 up:'<path d="M7 17 17 7M9 7h8v8"/>', down:'<path d="M17 7 7 17M15 17H7V9"/>',

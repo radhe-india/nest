@@ -703,3 +703,15 @@ body::before{content:"";position:fixed;top:0;bottom:0;left:max(18px,calc(50% - 2
 .qdone .hand{font-size:18px}
 .qdone button{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--in);text-decoration-thickness:2px;font-weight:500}
 .qdone button i{display:inline-block;font-style:normal;color:var(--in);margin-left:4px;font-weight:700}
+
+/* possible duplicates */
+.dupbar{display:flex;align-items:center;gap:10px;width:100%;text-align:left;font-size:13px}
+.dupbar span{flex:1}
+.dupes{display:flex;flex-direction:column;gap:12px}
+.dupe{border:1px solid var(--line);border-radius:16px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;background:var(--surface)}
+.dupe-h{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:4px}
+.dupe-e{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.dupe-e .bub{width:34px;height:34px;border-radius:11px}
+.dupe-e.drop .r-name{text-decoration:line-through;text-decoration-color:var(--out)}
+.btn.sm{padding:6px 12px;font-size:12.5px;min-height:0}
+.dupe .link{align-self:flex-start;padding-top:4px}

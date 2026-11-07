@@ -90,6 +90,7 @@ async function loadAll() {
     S.people = { me: 'Me', trisha: 'Trisha', ...(st.people || {}) };
     S.skipWords = st.skip_words || [];
     S.usualHidden = st.usual_hidden || null;
+    S.dupOk = st.dup_ok || [];
     if (S.mode !== 'demo') S.mode = 'live';
     if (!VIEWS().some(v => v[0] === S.view)) S.view = 'home';
   } catch (e) { S.mode = 'error'; S.error = 'Could not load your data. ' + (e.message || ''); }
@@ -226,6 +227,8 @@ function viewHome() {
       ${t.in ? `<div><span class="hand">spent</span><b class="num">${cnt(t.spent)}</b></div>` : ''}
       ${biz ? `<div><span class="hand">margin</span><b class="num">${t.in ? cnt(Math.max(0, left / t.in * 100), 'pct') : '—'}</b></div>` : `<div><span class="hand">saved</span><b class="num">${cnt(t.saved)}</b>${!t.saved && list.length ? `<span class="hand pen">← nothing yet!</span>` : ''}</div>`}
     </div></section>`;
+  const dn = findDupes(scopeOfView()).length;
+  if (dn) h += `<button class="statusbar warn dupbar" data-act="dupes">${icon('copy', 'sm')}<span><b>${dn} possible duplicate${dn === 1 ? '' : 's'}</b> · same amount logged twice. Tap to check.</span>${icon('chevr', 'sm')}</button>`;
   // the month on a sticky note
   const top = Object.entries(t.byCat).sort((a, b) => b[1] - a[1])[0];
   if (t.spent) {
@@ -524,6 +527,7 @@ function viewMore() {
       ${li('autopay', 'refund', 'Autopay & SIPs', `${autoItems().filter(p => !p.paused && +p.amount > 0).length} added automatically each month`)}
       ${li('presets', 'star', 'Usual ones & quick-adds', `${S.presets.filter(p => !p.auto).length} on Home and in Add`)}
       ${li('tab-import', 'upload', 'Import a statement', 'Screenshots, PDFs, CSV or Excel')}
+      ${li('dupes', 'copy', 'Find duplicates', (n => n ? `${n} to check` : 'Nothing doubled up')(findDupes(scopeOfView()).length))}
       ${li('cats', 'tag', 'Categories', `${S.cats.filter(c => !c.archived).length} categories`)}
       ${li('rules', 'rule', 'Import rules', `${S.rules.length} words that pick a category`)}
       ${li('people', 'users', 'Names', `${esc(S.people.me)} and ${esc(S.people.trisha)}`)}
@@ -548,6 +552,72 @@ const shHead = t => `<div class="sh-h"><h2>${t}</h2><button class="iconbtn" data
 function errText(e) { const m = (e && (e.message || e.error_description)) || '';
   if (/'(every|due_month)' column/i.test(m)) return 'Run 002-autopay-frequency.sql in Supabase once, then try again.'; if (/jwt|auth|permission|policy|row-level/i.test(m)) return 'Not allowed. Sign out and in again.'; if (/fetch|network/i.test(m)) return 'No connection. Try again.'; return 'Could not save. ' + m.slice(0, 80); }
 async function save(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg); return r || true; } catch (e) { console.error(e); toast(errText(e)); return null; } }
+
+/* ---------- duplicates ---------- */
+async function deleteEntry(ex, msg) {
+  if (!await save(() => S.db.remove('entries', ex.id), msg)) return false;
+  S.entries = S.entries.filter(x => x.id !== ex.id);
+  const ap = ex.source === 'auto' && S.presets.find(x => x.id === ex.preset_id);
+  if (ap) { const m = ex.date.slice(0, 7), skip = [...new Set([...(ap.skip_months || []), m])]; const r = await save(() => S.db.update('presets', ap.id, { skip_months: skip })); if (r) S.presets = S.presets.map(x => x.id === ap.id ? r : x); }
+  return true;
+}
+const dayGap = (a, b) => Math.abs(new Date(a) - new Date(b)) / 864e5;
+const normNote = n => (n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const sameMoney = (a, b) => a.kind === b.kind && Math.abs(+a.amount - +b.amount) < 0.01;
+const SRC = { import: 'From a statement', auto: 'Autopay', quick: 'Quick add', manual: 'Added by hand' };
+const srcOf = e => SRC[e.source] || SRC.manual;
+const pairKey = (a, b) => [a.id, b.id].sort().join('|');
+/* pairs that look like the same money logged twice: same type and amount, within 3 days,
+   and either logged two different ways (statement vs by hand, autopay vs statement) or identical on the same day */
+function findDupes(scope) {
+  const ok = new Set(S.dupOk), list = S.entries.filter(e => e.date && e.date <= today() && (!scope || (e.scope || 'home') === scope)).sort((a, b) => a.date.localeCompare(b.date));
+  const cand = [];
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const a = list[i], b = list[j], gap = dayGap(a.date, b.date); if (gap > 3) break;
+    if (!sameMoney(a, b) || (a.scope || 'home') !== (b.scope || 'home') || ok.has(pairKey(a, b))) continue;
+    const srcA = a.source || 'manual', srcB = b.source || 'manual';
+    if (srcA === 'auto' && srcB === 'auto') continue;
+    const differ = srcA !== srcB, twin = gap === 0 && normNote(a.note) === normNote(b.note);
+    if (!differ && !twin) continue;
+    cand.push({ a, b, days: gap, gap: gap + (normNote(a.note) === normNote(b.note) ? 0 : 0.5) });
+  }
+  // each entry is in one pair at most, closest first
+  const used = new Set(), out = [];
+  for (const p of cand.sort((x, y) => x.gap - y.gap)) {
+    if (used.has(p.a.id) || used.has(p.b.id)) continue;
+    used.add(p.a.id); used.add(p.b.id);
+    out.push({ ...p, drop: suggestDrop(p.a, p.b) });
+  }
+  return out.sort((x, y) => y.a.date.localeCompare(x.a.date));
+}
+/* which one to suggest removing: keep what you logged yourself, drop the statement copy */
+function suggestDrop(a, b) {
+  const rank = e => ({ manual: 3, quick: 3, auto: 2, import: 1 })[e.source || 'manual'] || 3;
+  if (rank(a) !== rank(b)) return rank(a) < rank(b) ? a : b;
+  return (a.created_at || '') > (b.created_at || '') ? a : b;
+}
+function dupesSheet() {
+  const P = findDupes(scopeOfView());
+  const card = (x, i) => { const one = e => { const c = catOf(e.category_id), drop = x.drop.id === e.id;
+      return `<div class="dupe-e${drop ? ' drop' : ''}"><span class="bub" style="--c:${c.color}">${icon(c.icon, 'sm')}</span><div class="r-main"><div class="r-name">${esc(e.note || c.name)}</div><div class="r-sub">${esc(dayLabel(e.date))} · ${esc(srcOf(e))} · ${esc(whoName(e.who))}</div></div>
+        <button class="btn sm${drop ? ' danger' : ''}" data-dd="${e.id}">Remove</button></div>`; };
+    return `<div class="dupe" data-di="${i}"><div class="dupe-h"><b class="num ${x.a.kind}">${fmt(x.a.amount)}</b><span class="small muted">${!x.days ? 'same day' : Math.round(x.days) + ' day' + (Math.round(x.days) === 1 ? '' : 's') + ' apart'}</span></div>${one(x.a)}${one(x.b)}
+      <button class="link" data-dk="${i}">Not a duplicate, keep both</button></div>`; };
+  openSheet(`${shHead('Possible duplicates')}<p class="small muted" style="margin:0">${P.length ? `These look like the same money logged twice: same amount, a few days apart, added in different ways. The one we'd remove is marked. Nothing is removed until you tap.` : 'Nothing looks doubled up. Nice.'}</p>
+    ${P.length ? `<div class="dupes">${P.map(card).join('')}</div>
+    ${P.length > 1 ? `<button class="btn danger block" id="dd-all">Remove the ${P.length} marked ones</button>` : ''}` : ''}`, p => {
+    p.onclick = async e => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.dd) { const ex = S.entries.find(x => x.id === b.dataset.dd); b.disabled = true; if (ex && await deleteEntry(ex, 'Duplicate removed')) { render(); dupesSheet(); } else b.disabled = false; }
+      else if (b.dataset.dk != null) { const x = P[+b.dataset.dk], v = [...S.dupOk, pairKey(x.a, x.b)]; if (await save(() => S.db.upsert('settings', { key: 'dup_ok', value: v }, 'key'))) { S.dupOk = v; render(); dupesSheet(); } }
+      else if (b.id === 'dd-all') {
+        if (!b.dataset.armed) { b.dataset.armed = 1; b.textContent = `Tap again to remove ${P.length} entries`; return; }
+        b.disabled = true; let n = 0; for (const x of P) if (await deleteEntry(x.drop)) n++;
+        toast(`Deleted ${n} duplicate${n === 1 ? '' : 's'}`); render(); dupesSheet();
+      }
+    };
+  });
+}
 
 /* entry sheet */
 function usageOrder(kind, scope) {
@@ -684,10 +754,7 @@ function entrySheet(id, preset, presetDate) {
     if (ex) {
       let armed = false;
       $('#f-del', p).onclick = async e => { if (!armed) { armed = true; e.currentTarget.textContent = 'Tap again to delete'; return; }
-        if (!await save(() => S.db.remove('entries', ex.id), 'Deleted')) return;
-        S.entries = S.entries.filter(x => x.id !== ex.id);
-        const ap = ex.source === 'auto' && S.presets.find(x => x.id === ex.preset_id);
-        if (ap) { const m = ex.date.slice(0, 7), skip = [...new Set([...(ap.skip_months || []), m])]; const r = await save(() => S.db.update('presets', ap.id, { skip_months: skip })); if (r) S.presets = S.presets.map(x => x.id === ap.id ? r : x); }
+        if (!await deleteEntry(ex, 'Deleted')) return;
         closeSheet(); render(); };
       $('#f-preset', p).onclick = () => presetEdit(null, { label: ex.note || catOf(ex.category_id).name, kind: ex.kind, amount: ex.amount, category_id: ex.category_id, goal_id: ex.goal_id, note: ex.note, who: ex.who, scope: ex.scope });
     } else if (!F.amount) { const a = $('#f-amt', p); try { a.focus({ preventScroll: true }); } catch (e) { a.focus(); } setTimeout(() => { if (document.activeElement !== a) a.focus({ preventScroll: true }); }, 300); }
@@ -1056,7 +1123,7 @@ function mountImport() {
     drop.ondragleave = () => drop.classList.remove('over');
     drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) startImport(f); };
   }
-  const biz = $('#im-biz'); if (biz) biz.onchange = () => { impState().scope = biz.checked ? 'business' : 'home'; if (S.imp.rows) S.imp.rows.forEach(prepRow); render(); };
+  const biz = $('#im-biz'); if (biz) biz.onchange = () => { impState().scope = biz.checked ? 'business' : 'home'; if (S.imp.rows) { S.imp._taken = new Set(); S.imp.rows.forEach(prepRow); } render(); };
   const rows = $('#im-rows');
   if (rows) {
     rows.oninput = rows.onchange = e => {
@@ -1084,8 +1151,11 @@ function prepRow(r) {
   r.flag = ''; r.on = true;
   const skipList = S.skipWords.filter(Boolean);
   if (SKIP_RE.test(s) || skipList.some(w => s.includes(w.toLowerCase()))) { r.on = false; r.flag = 'Looks like a card bill payment or a transfer between your accounts, so it is unticked.'; }
-  const dup = S.entries.find(e => e.kind === r.kind && Math.abs(+e.amount - r.amount) < 0.01 && e.date && r.date && Math.abs(new Date(e.date) - new Date(r.date)) <= 2 * 864e5);
-  if (dup && r.on) { r.on = false; r.flag = `Looks already logged: ${dup.note || catOf(dup.category_id).name} on ${dayLabel(dup.date)}.`; }
+  const taken = I._taken || (I._taken = new Set());
+  if (r.dupOf) { taken.delete(r.dupOf); r.dupOf = null; }
+  const dup = r.date && S.entries.filter(e => !taken.has(e.id) && e.date && sameMoney(e, r) && dayGap(e.date, r.date) <= 3 && (e.scope || 'home') === I.scope)
+    .sort((x, y) => dayGap(x.date, r.date) - dayGap(y.date, r.date))[0];
+  if (dup && r.on) { r.on = false; r.dupOf = dup.id; taken.add(dup.id); r.flag = `Already in Nest: ${dup.note || catOf(dup.category_id).name}, ${fmt(dup.amount)} on ${dayLabel(dup.date)} (${srcOf(dup).toLowerCase()}). Unticked so it isn't counted twice; tick it if it's a separate payment.`; }
   if (!r.date) { r.on = false; r.flag = (r.flag ? r.flag + ' ' : '') + 'No date found. Add one to include it.'; }
   return r;
 }
@@ -1098,6 +1168,7 @@ async function startImport(file, password) {
     impMod = impMod || await import('./import.js');
     const res = await impMod.extractFromFile(file, { password, onProgress: (pct, msg) => { if (pct != null) I.pct = pct; if (msg) I.msg = msg; const b = $('#im-bar'), m = $('#im-msg'); if (b) b.style.width = (I.pct || 5) + '%'; if (m) m.textContent = I.msg; } });
     I.method = res.method;
+    I._taken = new Set();
     I.rows = res.rows.map(r => prepRow({ ...r }));
     I.stage = 'review';
   } catch (e) {
@@ -1131,7 +1202,8 @@ async function saveImport() {
     if (newRules.length) { const rr = await save(() => S.db.insertMany('rules', newRules, 'match')); if (rr) S.rules = S.rules.concat(rr); }
   }
   const skipped = rows.length - res.length;
-  toast(`Saved ${res.length} entr${res.length === 1 ? 'y' : 'ies'}${skipped ? `, ${skipped} already imported before` : ''}`);
+  const nd = findDupes(I.scope).filter(x => res.some(e => e.id === x.a.id || e.id === x.b.id)).length;
+  toast(`Saved ${res.length} entr${res.length === 1 ? 'y' : 'ies'}${skipped ? `, ${skipped} already imported before` : ''}${nd ? `. ${nd} may be duplicates, check Home` : ''}`);
   const months = [...new Set(rows.map(r => r.date.slice(0, 7)))].sort();
   S.imp = { stage: 'pick', who: I.who, scope: I.scope, learn: I.learn };
   if (months.length) S.month = months[months.length - 1] <= thisMonth() ? months[months.length - 1] : thisMonth();
@@ -1165,6 +1237,7 @@ document.addEventListener('click', async e => {
   else if (a === 'preset') { const p = S.presets.find(x => x.id === b.dataset.id); if (p) entrySheet(null, p); }
   else if (a === 'presets') presetsSheet();
   else if (a === 'autopay') autopaySheet();
+  else if (a === 'dupes') dupesSheet();
   else if (a === 'catlist') { S.catFilter = b.dataset.id; S.kindFilter = 'spent'; go('entries'); }
   else if (a === 'catclear') { S.catFilter = ''; render(); }
   else if (a === 'kf') { S.kindFilter = b.dataset.k; render(); }
